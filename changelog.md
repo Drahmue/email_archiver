@@ -7,8 +7,15 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.0.0
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **`src/utils.py`** — Hilfsfunktionen: `decode_mime_header()`, `sanitize_filename()`, `build_pdf_filename()` mit Kollisionsauflösung und Europe/Berlin-Zeitzone
+- **`src/imap_client.py`** — IMAP-Operationen via imapclient: `connect()`, `fetch_emails()`, `move_email()` (MOVE mit Fallback auf COPY+DELETE), `disconnect()`
+- **`src/converter.py`** — E-Mail-zu-PDF-Konvertierung: Body-Extraktion (HTML/Plain-Text), Metadaten-Header-Block, weasyprint-Rendering mit URL-Blocking, pikepdf-Anhang-Einbettung
+- **`src/main.py`** — Einstiegspunkt: Konfiguration laden, Logging via ahlib, IMAP verbinden, pro E-Mail konvertieren + verschieben, Fehlerbehandlung, Abschluss-Zusammenfassung
+- Ordnerstruktur `src/`, `tests/`, `logs/`, `data/` angelegt
+
 ### Geändert
-- `SPECIFICATION.md` überarbeitet (nicht committed) — Details zu Dateinamenskonvention, Bibliotheksauswahl (weasyprint + pikepdf), Verarbeitungsablauf und Implementierungshinweisen ergänzt
+- `SPECIFICATION.md` überarbeitet — Details zu Dateinamenskonvention, Bibliotheksauswahl (weasyprint + pikepdf), Verarbeitungsablauf und Implementierungshinweisen ergänzt
 - `requirements.txt` korrigiert — falschen Standard-Template-Inhalt (numpy/pandas/openpyxl/yfinance) ersetzt durch projektspezifische Abhängigkeiten: weasyprint, pikepdf, imapclient, ahlib
 - `config/config.ini.template` korrigiert — generischen Platzhalter ersetzt durch vollständige [imap]/[output]/[logging]-Struktur gemäß SPECIFICATION.md
 

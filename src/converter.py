@@ -1,0 +1,264 @@
+"""
+converter.py — E-Mail-zu-PDF-Konvertierung für email_archiver
+
+Verarbeitungsablauf:
+  1. E-Mail-Body extrahieren (HTML bevorzugt, Fallback: text/plain → HTML-Wrapper)
+  2. E-Mail-Metadaten (Von, Betreff, Datum) als sichtbaren Header-Block einbetten
+  3. HTML → PDF via weasyprint (externe URLs werden blockiert)
+  4. Anhänge aus der E-Mail extrahieren
+  5. Anhänge als EmbeddedFile in das PDF einbetten via pikepdf
+     (sichtbar im Büroklammer-Panel in Adobe Acrobat, PDF-XChange etc.)
+
+Stellt bereit:
+  - convert_and_save() : Vollständige Konvertierung einer E-Mail in eine PDF-Datei
+"""
+
+import html as html_module
+import logging
+import re
+from email.message import Message
+from pathlib import Path
+
+import pikepdf
+from pikepdf import AttachedFileSpec
+from weasyprint import HTML
+
+from utils import decode_mime_header
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# URL-Fetcher: externe Ressourcen blockieren (Datenschutz, Tracking-Schutz)
+# ---------------------------------------------------------------------------
+
+def _block_external_urls(url: str) -> dict:
+    """
+    Weasyprint URL-Fetcher, der alle externen URLs blockiert.
+
+    data:-URIs (base64-eingebettete Bilder) werden von weasyprint intern verarbeitet
+    und rufen diesen Fetcher nicht auf. Alle anderen URLs (http, https, file) werden
+    blockiert, um Tracking-Pixel und externe Ressourcen in HTML-E-Mails zu unterdrücken.
+
+    Args:
+        url (str): Die von weasyprint angeforderte URL
+
+    Raises:
+        ValueError: Immer — weasyprint überspringt die Ressource bei Ausnahme
+    """
+    raise ValueError(f"Externe URL blockiert (Datenschutz): {url}")
+
+
+# ---------------------------------------------------------------------------
+# Body-Extraktion
+# ---------------------------------------------------------------------------
+
+def _extract_body(msg: Message) -> str:
+    """
+    Extrahiert den E-Mail-Body als HTML-String.
+
+    Bevorzugt den text/html-Part. Fällt auf text/plain zurück, der dann
+    in einen einfachen HTML-Wrapper eingebettet wird. Parts mit
+    Content-Disposition: attachment werden übersprungen.
+
+    Args:
+        msg (Message): Geparste E-Mail (email.message.Message)
+
+    Returns:
+        str: HTML-String des E-Mail-Bodys. Gibt ein Minimal-HTML zurück,
+             wenn kein Body gefunden wird.
+    """
+    html_part = None
+    text_part = None
+
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            disposition = part.get("Content-Disposition", "")
+            # Anhänge überspringen
+            if "attachment" in disposition:
+                continue
+            if content_type == "text/html" and html_part is None:
+                html_part = part
+            elif content_type == "text/plain" and text_part is None:
+                text_part = part
+    else:
+        content_type = msg.get_content_type()
+        if content_type == "text/html":
+            html_part = msg
+        elif content_type == "text/plain":
+            text_part = msg
+
+    if html_part is not None:
+        charset = html_part.get_content_charset() or "utf-8"
+        raw = html_part.get_payload(decode=True)
+        return raw.decode(charset, errors="replace")
+
+    if text_part is not None:
+        charset = text_part.get_content_charset() or "utf-8"
+        raw = text_part.get_payload(decode=True)
+        plain_text = raw.decode(charset, errors="replace")
+        # Plain-Text HTML-sicher machen und in <pre> wrappen
+        escaped = html_module.escape(plain_text)
+        return (
+            f'<pre style="white-space: pre-wrap; word-wrap: break-word; '
+            f'font-family: monospace; font-size: 10pt;">{escaped}</pre>'
+        )
+
+    logger.warning("Kein Body-Part in der E-Mail gefunden.")
+    return "<p><em>(Kein Inhalt)</em></p>"
+
+
+# ---------------------------------------------------------------------------
+# Anhänge extrahieren
+# ---------------------------------------------------------------------------
+
+def _extract_attachments(msg: Message) -> list[tuple[str, bytes]]:
+    """
+    Extrahiert alle Dateianhänge aus der E-Mail.
+
+    Anhänge werden anhand von Content-Disposition: attachment oder
+    einem vorhandenen Dateinamen (get_filename()) erkannt.
+    text/* und multipart/* ohne Dateinamen werden als Body-Parts behandelt
+    und nicht extrahiert.
+
+    Args:
+        msg (Message): Geparste E-Mail
+
+    Returns:
+        list[tuple[str, bytes]]: Liste von (Dateiname, Rohdaten).
+                                 Leere Liste wenn keine Anhänge vorhanden.
+    """
+    attachments = []
+
+    if not msg.is_multipart():
+        return attachments
+
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        disposition = part.get("Content-Disposition", "")
+        filename = part.get_filename()
+
+        # Body-Parts ohne explizite Anhang-Disposition überspringen
+        if "attachment" not in disposition and not filename:
+            continue
+        # multipart/* enthält keine Nutzdaten
+        if content_type.startswith("multipart/"):
+            continue
+
+        if filename:
+            filename = decode_mime_header(filename)
+
+        data = part.get_payload(decode=True)
+        if data and filename:
+            attachments.append((filename, data))
+            logger.debug(f"Anhang gefunden: {filename} ({len(data)} Bytes)")
+
+    return attachments
+
+
+# ---------------------------------------------------------------------------
+# Anhänge in PDF einbetten
+# ---------------------------------------------------------------------------
+
+def _embed_attachments(pdf_path: Path, attachments: list[tuple[str, bytes]]) -> None:
+    """
+    Bettet Dateianhänge als EmbeddedFile in eine bestehende PDF-Datei ein.
+
+    Die eingebetteten Dateien sind im Büroklammer-Panel von Adobe Acrobat
+    und PDF-XChange sichtbar und können von dort geöffnet/gespeichert werden.
+
+    Args:
+        pdf_path (Path): Pfad zur bestehenden PDF-Datei (wird überschrieben)
+        attachments (list[tuple[str, bytes]]): Liste von (Dateiname, Rohdaten)
+
+    Raises:
+        pikepdf.PdfError: Bei Fehler beim Öffnen oder Speichern der PDF
+    """
+    with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
+        for filename, data in attachments:
+            filespec = AttachedFileSpec(pdf, data, description=filename, filename=filename)
+            pdf.attachments[filename] = filespec
+        pdf.save(pdf_path)
+
+
+# ---------------------------------------------------------------------------
+# Öffentliche API
+# ---------------------------------------------------------------------------
+
+def convert_and_save(msg: Message, pdf_path: Path) -> None:
+    """
+    Konvertiert eine E-Mail vollständig in eine PDF-Datei mit eingebetteten Anhängen.
+
+    Ablauf:
+      1. Body (HTML oder Plain-Text) extrahieren
+      2. HTML-Dokument mit Metadaten-Header (Von, Betreff, Datum) aufbauen
+      3. HTML → PDF via weasyprint (externe URLs werden blockiert)
+      4. PDF auf Disk speichern
+      5. Anhänge extrahieren und via pikepdf in das PDF einbetten
+
+    Args:
+        msg (Message): Geparste E-Mail (email.message.Message)
+        pdf_path (Path): Zielpfad für die PDF-Datei (Elternverzeichnis muss existieren)
+
+    Raises:
+        Exception: Weiterleitung von weasyprint- oder pikepdf-Fehlern.
+                   Der Aufrufer (main.py) fängt diese ab und behandelt sie pro E-Mail.
+    """
+    # --- Metadaten aus E-Mail-Headern ---
+    subject = decode_mime_header(msg.get("Subject", "(kein Betreff)"))
+    from_addr = decode_mime_header(msg.get("From", ""))
+    date_str = msg.get("Date", "")
+
+    # --- Body extrahieren ---
+    body_html = _extract_body(msg)
+
+    # --- Metadaten-Header-Block als HTML ---
+    meta_block = (
+        '<div style="'
+        "border-bottom: 2px solid #cccccc;"
+        "margin-bottom: 1.2em;"
+        "padding-bottom: 0.8em;"
+        "font-family: Arial, Helvetica, sans-serif;"
+        "font-size: 9pt;"
+        'color: #444444;">'
+        f"<strong>Von:</strong> {html_module.escape(from_addr)}<br>"
+        f"<strong>Betreff:</strong> {html_module.escape(subject)}<br>"
+        f"<strong>Datum:</strong> {html_module.escape(date_str)}"
+        "</div>"
+    )
+
+    # --- Vollständiges HTML-Dokument zusammensetzen ---
+    # Wenn der Body bereits ein <body>-Tag enthält, meta_block dahinter einfügen.
+    # Andernfalls komplettes Dokument-Gerüst aufbauen.
+    if re.search(r"<body[^>]*>", body_html, re.IGNORECASE):
+        full_html = re.sub(
+            r"(<body[^>]*>)",
+            r"\1" + meta_block,
+            body_html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    else:
+        full_html = (
+            "<!DOCTYPE html>"
+            '<html><head><meta charset="utf-8">'
+            "<style>"
+            "body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; }"
+            "a { color: #1155CC; }"
+            "img { max-width: 100%; height: auto; }"
+            "</style>"
+            f"</head><body>{meta_block}{body_html}</body></html>"
+        )
+
+    # --- HTML → PDF via weasyprint ---
+    html_doc = HTML(string=full_html, url_fetcher=_block_external_urls, base_url=None)
+    pdf_bytes = html_doc.write_pdf()
+    pdf_path.write_bytes(pdf_bytes)
+    logger.debug(f"PDF geschrieben: {pdf_path.name} ({len(pdf_bytes)} Bytes)")
+
+    # --- Anhänge extrahieren und einbetten ---
+    attachments = _extract_attachments(msg)
+    if attachments:
+        _embed_attachments(pdf_path, attachments)
+        logger.debug(f"{len(attachments)} Anhang/Anhänge in PDF eingebettet.")
