@@ -43,7 +43,7 @@ def sanitize_filename(name: str) -> str:
     Bereinigt einen String für die Verwendung als Dateinamensteil.
 
     Regeln:
-      - Alles außer Buchstaben (inkl. Unicode), Ziffern, Bindestrich und Punkt → Unterstrich
+      - Alles außer Buchstaben (inkl. Unicode), Ziffern und Bindestrich → Unterstrich
       - Mehrfache aufeinanderfolgende Unterstriche werden zusammengefasst
       - Führende und abschließende Unterstriche werden entfernt
       - Ergebnis wird auf MAX_SENDER_LEN Zeichen gekürzt
@@ -55,8 +55,8 @@ def sanitize_filename(name: str) -> str:
         str: Bereinigter Dateinamen-Teil, maximal MAX_SENDER_LEN Zeichen lang.
              Leerer String wenn der Name nach Bereinigung leer ist.
     """
-    # Alles außer Unicode-Buchstaben, Ziffern, Bindestrich und Punkt durch Unterstrich ersetzen
-    sanitized = re.sub(r'[^\w\-.]', '_', name, flags=re.UNICODE)
+    # Alles außer Unicode-Buchstaben, Ziffern und Bindestrich durch Unterstrich ersetzen
+    sanitized = re.sub(r'[^\w\-]', '_', name, flags=re.UNICODE)
     # Mehrfache Unterstriche zusammenfassen
     sanitized = re.sub(r'_+', '_', sanitized)
     # Führende/abschließende Unterstriche entfernen
