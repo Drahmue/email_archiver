@@ -1,0 +1,10 @@
+*.ini
+!config.ini.template
+logs/
+*.log
+__pycache__/
+.venv/
+*.xlsx
+*.csv
+.vscode/
+/data/

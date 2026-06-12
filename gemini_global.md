@@ -1,0 +1,1 @@
+C:/Users/ah/dev/gemini_global_instructions.md
