@@ -1,3 +1,16 @@
-; Konfigurationsvorlage
-[Section]
-netzwerk_pfad = \\\\server\\freigabe
+; Konfigurationsvorlage für email_archiver
+; Kopieren nach config.ini und Werte anpassen (config.ini ist nicht im Repository)
+
+[imap]
+server           = imap.strato.de
+port             = 993
+username         = BENUTZER@DOMAIN.DE
+password         = PASSWORT_HIER_EINTRAGEN
+source_folder    = 01 für Ablage
+processed_folder = 01 für Ablage erledigt
+
+[output]
+folder = C:\Users\BENUTZER\Downloads\email_archive
+
+[logging]
+log_level = INFO

@@ -1,5 +1,4 @@
-numpy
-pandas==2.2.3
-openpyxl
-yfinance
+weasyprint
+pikepdf
+imapclient
 git+https://github.com/Drahmue/ahlib.git
