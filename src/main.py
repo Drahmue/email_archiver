@@ -17,7 +17,7 @@ Verwendung:
 
 import os
 import sys
-import logging
+from datetime import datetime
 from pathlib import Path
 
 # --- Arbeitsverzeichnis auf Projektwurzel setzen, src/ zu sys.path hinzufügen ---
@@ -27,33 +27,33 @@ _project_root = Path(__file__).parent.parent
 os.chdir(_project_root)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ahlib import screen_and_log, StructuredConfigParser, setup_logging, get_timestamp
+from ahlib import create_extended_logger, load_structured_config
 
 import imap_client as imap
 import converter
-from utils import build_pdf_filename
+from utils import build_pdf_filename, decode_mime_header
 
 
-def load_config(config_path: str = "config/config.ini") -> StructuredConfigParser:
+def load_config(config_path: str, logger) -> object:
     """
     Liest die Konfigurationsdatei ein und gibt sie zurück.
 
     Args:
         config_path (str): Pfad zur INI-Datei, relativ zur Projektwurzel
+        logger: ExtendedLogger-Instanz für Fehlermeldungen
 
     Returns:
         StructuredConfigParser: Geladene Konfiguration
 
     Raises:
         FileNotFoundError: Wenn config.ini nicht existiert
-        Exception: Bei ungültigem INI-Format
     """
     if not Path(config_path).exists():
         raise FileNotFoundError(
             f"Konfigurationsdatei nicht gefunden: {config_path}\n"
             f"Bitte config/config.ini.template nach config/config.ini kopieren und anpassen."
         )
-    return StructuredConfigParser(config_path)
+    return load_structured_config(config_path, logger)
 
 
 def ensure_output_folder(folder_path: str) -> Path:
@@ -76,6 +76,7 @@ def process_emails(
     source_folder: str,
     processed_folder: str,
     output_folder: Path,
+    logger,
 ) -> tuple[int, int]:
     """
     Verarbeitet alle E-Mails im Quellordner: konvertiert sie zu PDF und verschiebt sie.
@@ -88,6 +89,7 @@ def process_emails(
         source_folder (str): IMAP-Quellordner
         processed_folder (str): IMAP-Zielordner nach Verarbeitung
         output_folder (Path): Lokales Verzeichnis für PDF-Ausgabe
+        logger: ExtendedLogger-Instanz
 
     Returns:
         tuple[int, int]: (Anzahl Erfolge, Anzahl Fehler)
@@ -95,18 +97,18 @@ def process_emails(
     emails = imap.fetch_emails(client, source_folder)
 
     if not emails:
-        screen_and_log("Keine E-Mails zur Verarbeitung gefunden.")
+        logger.info("Keine E-Mails zur Verarbeitung gefunden.")
         return 0, 0
 
     success_count = 0
     error_count = 0
 
     for msg_id, msg in emails:
-        subject = msg.get("Subject", "(kein Betreff)")
+        subject = decode_mime_header(msg.get("Subject", "(kein Betreff)"))
         from_addr = msg.get("From", "")
         date_str = msg.get("Date", "")
 
-        screen_and_log(f'Verarbeite: "{subject}" von {from_addr}')
+        logger.info(f'Verarbeite: "{subject}" von {decode_mime_header(from_addr)}')
 
         try:
             # PDF-Dateipfad nach Namenskonvention bestimmen
@@ -114,22 +116,18 @@ def process_emails(
 
             # E-Mail → PDF konvertieren und speichern
             converter.convert_and_save(msg, pdf_path)
-            screen_and_log(f"  → PDF gespeichert: {pdf_path.name}")
+            logger.info(f"  -> PDF gespeichert: {pdf_path.name}")
 
             # E-Mail in Zielordner verschieben
             imap.move_email(client, msg_id, processed_folder)
-            screen_and_log(f"  → E-Mail verschoben nach '{processed_folder}'")
+            logger.info(f"  -> E-Mail verschoben nach '{processed_folder}'")
 
             success_count += 1
 
         except Exception as exc:
             error_count += 1
-            logging.getLogger(__name__).error(
-                f"Fehler bei E-Mail (ID={msg_id}, Betreff={subject!r}): {exc}",
-                exc_info=True,
-            )
-            screen_and_log(
-                f"  FEHLER: {exc} — E-Mail bleibt in '{source_folder}'", "ERROR"
+            logger.error(
+                f"  FEHLER bei E-Mail (ID={msg_id}, Betreff={subject!r}): {exc}"
             )
 
     return success_count, error_count
@@ -142,18 +140,19 @@ def main() -> None:
     # --- Logging initialisieren ---
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)
-    log_file = logs_dir / f"email_archiver_{get_timestamp()}.log"
-    setup_logging(log_file)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = logs_dir / f"email_archiver_{timestamp}.log"
+    logger = create_extended_logger(str(log_file), screen_output=True, script_name="email_archiver")
 
-    screen_and_log("=" * 60)
-    screen_and_log("email_archiver gestartet")
-    screen_and_log("=" * 60)
+    logger.info("=" * 60)
+    logger.info("email_archiver gestartet")
+    logger.info("=" * 60)
 
     # --- Konfiguration laden ---
     try:
-        config = load_config()
+        config = load_config("config/config.ini", logger)
     except FileNotFoundError as exc:
-        screen_and_log(str(exc), "ERROR")
+        logger.error(str(exc))
         sys.exit(1)
 
     server = config.get("imap", "server")
@@ -166,22 +165,21 @@ def main() -> None:
 
     # --- Ausgabeordner sicherstellen ---
     output_folder = ensure_output_folder(output_folder_str)
-    screen_and_log(f"PDF-Ausgabeordner: {output_folder}")
+    logger.info(f"PDF-Ausgabeordner: {output_folder}")
 
     # --- IMAP-Verbindung herstellen ---
     client = None
     try:
-        screen_and_log(f"Verbinde mit {server}:{port} als {username} ...")
+        logger.info(f"Verbinde mit {server}:{port} als {username} ...")
         client = imap.connect(server, port, username, password)
 
         # --- E-Mails verarbeiten ---
         success_count, error_count = process_emails(
-            client, source_folder, processed_folder, output_folder
+            client, source_folder, processed_folder, output_folder, logger
         )
 
     except Exception as exc:
-        screen_and_log(f"Kritischer Fehler: {exc}", "ERROR")
-        logging.getLogger(__name__).error("Kritischer Fehler", exc_info=True)
+        logger.error(f"Kritischer Fehler: {exc}")
         sys.exit(1)
 
     finally:
@@ -189,9 +187,9 @@ def main() -> None:
             imap.disconnect(client)
 
     # --- Abschluss-Zusammenfassung ---
-    screen_and_log("=" * 60)
-    screen_and_log(f"Fertig — Erfolgreich: {success_count}, Fehler: {error_count}")
-    screen_and_log("=" * 60)
+    logger.info("=" * 60)
+    logger.info(f"Fertig -- Erfolgreich: {success_count}, Fehler: {error_count}")
+    logger.info("=" * 60)
 
     if error_count > 0:
         sys.exit(1)

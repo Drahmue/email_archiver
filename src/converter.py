@@ -4,7 +4,7 @@ converter.py — E-Mail-zu-PDF-Konvertierung für email_archiver
 Verarbeitungsablauf:
   1. E-Mail-Body extrahieren (HTML bevorzugt, Fallback: text/plain → HTML-Wrapper)
   2. E-Mail-Metadaten (Von, Betreff, Datum) als sichtbaren Header-Block einbetten
-  3. HTML → PDF via weasyprint (externe URLs werden blockiert)
+  3. HTML → PDF via xhtml2pdf (externe URLs werden blockiert)
   4. Anhänge aus der E-Mail extrahieren
   5. Anhänge als EmbeddedFile in das PDF einbetten via pikepdf
      (sichtbar im Büroklammer-Panel in Adobe Acrobat, PDF-XChange etc.)
@@ -13,7 +13,9 @@ Stellt bereit:
   - convert_and_save() : Vollständige Konvertierung einer E-Mail in eine PDF-Datei
 """
 
+import base64
 import html as html_module
+import io
 import logging
 import re
 from email.message import Message
@@ -21,7 +23,7 @@ from pathlib import Path
 
 import pikepdf
 from pikepdf import AttachedFileSpec
-from weasyprint import HTML
+from xhtml2pdf import pisa
 
 from utils import decode_mime_header
 
@@ -29,24 +31,76 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# URL-Fetcher: externe Ressourcen blockieren (Datenschutz, Tracking-Schutz)
+# Link-Callback: externe Ressourcen blockieren (Datenschutz, Tracking-Schutz)
 # ---------------------------------------------------------------------------
 
-def _block_external_urls(url: str) -> dict:
+def _block_external_urls(uri: str, rel: str) -> str | None:
     """
-    Weasyprint URL-Fetcher, der alle externen URLs blockiert.
+    xhtml2pdf link_callback, der externe URLs blockiert.
 
-    data:-URIs (base64-eingebettete Bilder) werden von weasyprint intern verarbeitet
-    und rufen diesen Fetcher nicht auf. Alle anderen URLs (http, https, file) werden
-    blockiert, um Tracking-Pixel und externe Ressourcen in HTML-E-Mails zu unterdrücken.
+    Wird von xhtml2pdf aufgerufen, wenn das HTML externe Ressourcen referenziert
+    (Bilder, Stylesheets etc.). Externe URLs (http/https) werden blockiert,
+    um Tracking-Pixel und externe Ressourcen in HTML-E-Mails zu unterdrücken.
+    data:-URIs werden direkt von xhtml2pdf verarbeitet und rufen diesen
+    Callback nicht auf.
 
     Args:
-        url (str): Die von weasyprint angeforderte URL
+        uri (str): Die referenzierte URI
+        rel (str): Relativer Pfad (von xhtml2pdf übergeben)
 
-    Raises:
-        ValueError: Immer — weasyprint überspringt die Ressource bei Ausnahme
+    Returns:
+        str | None: None blockiert die Ressource, sonst der lokale Pfad
     """
-    raise ValueError(f"Externe URL blockiert (Datenschutz): {url}")
+    if uri.startswith(("http://", "https://", "//")):
+        logger.debug(f"Externe URL blockiert (Datenschutz): {uri}")
+        return None
+    return uri
+
+
+# ---------------------------------------------------------------------------
+# cid:-Bilder auflösen (multipart/related Inline-Bilder)
+# ---------------------------------------------------------------------------
+
+def _resolve_cid_images(msg: Message, html: str) -> str:
+    """
+    Ersetzt cid:-Referenzen in HTML durch base64-kodierte data:-URIs.
+
+    In multipart/related E-Mails werden Inline-Bilder als separate MIME-Parts
+    gespeichert und im HTML via src="cid:<content-id>" referenziert. Diese
+    Funktion sucht alle solchen Parts, kodiert sie als base64 und ersetzt die
+    cid:-Referenzen im HTML, damit xhtml2pdf die Bilder rendern kann.
+
+    Args:
+        msg (Message): Geparste E-Mail (alle MIME-Parts werden durchsucht)
+        html (str): HTML-String mit potentiellen cid:-Referenzen
+
+    Returns:
+        str: HTML-String mit aufgelösten data:-URIs anstelle von cid:-Referenzen
+    """
+    # Content-ID → data-URI Mapping aufbauen
+    cid_map: dict[str, str] = {}
+    for part in msg.walk():
+        content_id = part.get("Content-ID", "").strip()
+        if not content_id:
+            continue
+        # Angle brackets entfernen: <image001.png@xxx> → image001.png@xxx
+        content_id = content_id.strip("<>")
+        data = part.get_payload(decode=True)
+        if not data:
+            continue
+        mime_type = part.get_content_type()
+        encoded = base64.b64encode(data).decode("ascii")
+        cid_map[content_id] = f"data:{mime_type};base64,{encoded}"
+
+    if not cid_map:
+        return html
+
+    # cid:xxx → data:image/...;base64,... ersetzen (case-insensitive)
+    def replace_cid(match: re.Match) -> str:
+        cid = match.group(1)
+        return cid_map.get(cid, match.group(0))
+
+    return re.sub(r'cid:([^\s"\']+)', replace_cid, html, flags=re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +247,7 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
     Ablauf:
       1. Body (HTML oder Plain-Text) extrahieren
       2. HTML-Dokument mit Metadaten-Header (Von, Betreff, Datum) aufbauen
-      3. HTML → PDF via weasyprint (externe URLs werden blockiert)
+      3. HTML → PDF via xhtml2pdf (externe URLs werden blockiert)
       4. PDF auf Disk speichern
       5. Anhänge extrahieren und via pikepdf in das PDF einbetten
 
@@ -202,7 +256,8 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
         pdf_path (Path): Zielpfad für die PDF-Datei (Elternverzeichnis muss existieren)
 
     Raises:
-        Exception: Weiterleitung von weasyprint- oder pikepdf-Fehlern.
+        RuntimeError: Wenn xhtml2pdf die PDF-Konvertierung meldet
+        Exception: Weiterleitung von pikepdf-Fehlern.
                    Der Aufrufer (main.py) fängt diese ab und behandelt sie pro E-Mail.
     """
     # --- Metadaten aus E-Mail-Headern ---
@@ -210,8 +265,9 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
     from_addr = decode_mime_header(msg.get("From", ""))
     date_str = msg.get("Date", "")
 
-    # --- Body extrahieren ---
+    # --- Body extrahieren und cid:-Bilder auflösen ---
     body_html = _extract_body(msg)
+    body_html = _resolve_cid_images(msg, body_html)
 
     # --- Metadaten-Header-Block als HTML ---
     meta_block = (
@@ -251,9 +307,18 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
             f"</head><body>{meta_block}{body_html}</body></html>"
         )
 
-    # --- HTML → PDF via weasyprint ---
-    html_doc = HTML(string=full_html, url_fetcher=_block_external_urls, base_url=None)
-    pdf_bytes = html_doc.write_pdf()
+    # --- HTML → PDF via xhtml2pdf ---
+    pdf_buffer = io.BytesIO()
+    status = pisa.CreatePDF(
+        full_html.encode("utf-8"),
+        dest=pdf_buffer,
+        encoding="utf-8",
+        link_callback=_block_external_urls,
+    )
+    if status.err:
+        raise RuntimeError(f"xhtml2pdf Konvertierungsfehler (Code {status.err})")
+
+    pdf_bytes = pdf_buffer.getvalue()
     pdf_path.write_bytes(pdf_bytes)
     logger.debug(f"PDF geschrieben: {pdf_path.name} ({len(pdf_bytes)} Bytes)")
 
