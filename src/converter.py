@@ -23,11 +23,44 @@ from pathlib import Path
 
 import pikepdf
 from pikepdf import AttachedFileSpec
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from xhtml2pdf import pisa
 
 from utils import decode_mime_header
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# TrueType-Fonts registrieren (Unicode-Unterstützung für Umlaute etc.)
+# ---------------------------------------------------------------------------
+
+def _register_unicode_fonts() -> None:
+    """
+    Registriert Arial als TrueType-Font bei reportlab.
+
+    Ohne TTF-Font verwendet reportlab intern Helvetica (Type 1), das nur den
+    Latin-1-Zeichensatz unterstützt. Umlaute und andere Unicode-Zeichen
+    werden dann als Byte-Sequenzen in den PDF-Stream geschrieben und nicht
+    korrekt gerendert. Arial aus den Windows-Systemfonts unterstützt den
+    vollen Unicode-Bereich.
+    """
+    fonts_dir = Path("C:/Windows/Fonts")
+    font_map = {
+        "Arial":           "arial.ttf",
+        "Arial-Bold":      "arialbd.ttf",
+        "Arial-Italic":    "ariali.ttf",
+        "Arial-BoldItalic":"arialbi.ttf",
+    }
+    for name, filename in font_map.items():
+        font_path = fonts_dir / filename
+        if font_path.exists():
+            try:
+                pdfmetrics.registerFont(TTFont(name, str(font_path)))
+            except Exception as exc:
+                logger.warning(f"Font '{name}' konnte nicht registriert werden: {exc}")
+
+_register_unicode_fonts()
 
 
 # ---------------------------------------------------------------------------
@@ -284,14 +317,33 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
         "</div>"
     )
 
+    # --- CSS-Block mit Unicode-fähigem Font ---
+    # Arial wurde beim Modulstart via pdfmetrics.registerFont(TTFont(...)) registriert.
+    # xhtml2pdf verwendet den registrierten TTF-Font wenn font-family: Arial angegeben wird.
+    # Kein @font-face nötig (Windows-Pfade würden von xhtml2pdf als URL fehlinterpretiert).
+    unicode_css = (
+        "body { font-family: Arial, sans-serif; font-size: 10pt; }"
+        "a { color: #1155CC; }"
+        "img { max-width: 100%; height: auto; }"
+    )
+
     # --- Vollständiges HTML-Dokument zusammensetzen ---
-    # Wenn der Body bereits ein <body>-Tag enthält, meta_block dahinter einfügen.
+    # Wenn der Body bereits ein <body>-Tag enthält, meta_block dahinter einfügen
+    # und unicode_css in den <head> injizieren.
     # Andernfalls komplettes Dokument-Gerüst aufbauen.
     if re.search(r"<body[^>]*>", body_html, re.IGNORECASE):
+        # unicode_css vor dem schließenden </head> oder vor <body> einfügen
+        style_tag = f"<style>{unicode_css}</style>"
+        if re.search(r"</head>", body_html, re.IGNORECASE):
+            full_html = re.sub(
+                r"(</head>)", style_tag + r"\1", body_html, count=1, flags=re.IGNORECASE
+            )
+        else:
+            full_html = style_tag + body_html
         full_html = re.sub(
             r"(<body[^>]*>)",
             r"\1" + meta_block,
-            body_html,
+            full_html,
             count=1,
             flags=re.IGNORECASE,
         )
@@ -299,20 +351,19 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
         full_html = (
             "<!DOCTYPE html>"
             '<html><head><meta charset="utf-8">'
-            "<style>"
-            "body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; }"
-            "a { color: #1155CC; }"
-            "img { max-width: 100%; height: auto; }"
-            "</style>"
+            f"<style>{unicode_css}</style>"
             f"</head><body>{meta_block}{body_html}</body></html>"
         )
 
     # --- HTML → PDF via xhtml2pdf ---
+    # Als Unicode-String übergeben (nicht als Bytes), damit xhtml2pdf
+    # Unicode-Zeichen korrekt auf WinAnsi-Codes mappt. Bei Übergabe als
+    # UTF-8-Bytes wurden die Multi-Byte-Sequenzen direkt in den PDF-Stream
+    # geschrieben, was zu kaputten Umlauten führt.
     pdf_buffer = io.BytesIO()
     status = pisa.CreatePDF(
-        full_html.encode("utf-8"),
+        full_html,
         dest=pdf_buffer,
-        encoding="utf-8",
         link_callback=_block_external_urls,
     )
     if status.err:
