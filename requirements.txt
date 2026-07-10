@@ -1,4 +1,5 @@
 xhtml2pdf
+beautifulsoup4
 pikepdf
 imapclient
 git+https://github.com/Drahmue/ahlib.git
