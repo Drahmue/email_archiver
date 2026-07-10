@@ -20,6 +20,8 @@ import logging
 import re
 from email.message import Message
 from email.utils import parsedate_to_datetime
+
+from bs4 import BeautifulSoup
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -119,6 +121,58 @@ def _format_date_german(date_str: str) -> str:
 def _strip_mso_css(html: str) -> str:
     """Entfernt @list CSS-Regeln (MSO-proprietär), die xhtml2pdf nicht parsen kann."""
     return re.sub(r'@list\b[^{]*\{[^{}]*\}', '', html, flags=re.DOTALL | re.IGNORECASE)
+
+
+def _strip_style_width(style: str) -> str:
+    """Entfernt width-Deklarationen aus einem CSS-style-String."""
+    return re.sub(r'\bwidth\s*:[^;]+;?\s*', '', style).strip().rstrip(";")
+
+
+def _normalize_tables(html: str) -> str:
+    """
+    Normalisiert Tabellen-HTML-Attribute für bessere PDF-Darstellung.
+
+    Unterscheidet zwei Typen:
+    - Datentabellen (border-Attribut > 0): schwarze Rahmen → graue Rahmen,
+      feste Pixelbreiten → width:100%
+    - Layout-Tabellen (kein border oder border="0"): alle Border-Styles
+      werden komplett überschrieben, damit xhtml2pdf trotz border-collapse
+      keine Rahmen zeichnet. Nur Padding aus dem Originalstyle bleibt.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    for table in soup.find_all("table"):
+        try:
+            has_border_attr = int(table.get("border", 0)) > 0
+        except (ValueError, TypeError):
+            has_border_attr = False
+        # border="1" + style="border:none" → CSS überschreibt das Attribut (Outlook-Muster)
+        css_border_none = "border:none" in table.get("style", "").replace(" ", "").lower()
+        is_data_table = has_border_attr and not css_border_none
+
+        table.attrs.pop("width", None)
+        table.attrs.pop("border", None)
+        table.attrs.pop("cellspacing", None)
+        table.attrs.pop("cellpadding", None)
+
+        if is_data_table:
+            table["style"] = "border-collapse: collapse; width: 100%;"
+            for cell in table.find_all(["td", "th"]):
+                cell.attrs.pop("width", None)
+                cell["style"] = "border: 1px solid #cccccc; padding: 3px 6px;"
+        else:
+            # Komplett überschreiben — xhtml2pdf rendert border-collapse:collapse
+            # mit Rahmen auch wenn border:none gesetzt ist
+            table["border"] = "0"
+            table["style"] = "border: 0px; border-spacing: 0;"
+            for cell in table.find_all(["td", "th"]):
+                cell.attrs.pop("width", None)
+                orig = cell.get("style", "")
+                m = re.search(r'padding\s*:[^;]+', orig)
+                padding = m.group(0) if m else "padding: 0px 5pt"
+                cell["style"] = f"border: 0px; {padding};"
+
+    return str(soup)
 
 
 def _resolve_cid_images(msg: Message, html: str) -> str:
@@ -334,6 +388,7 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
     # --- Body extrahieren und cid:-Bilder auflösen ---
     body_html = _extract_body(msg)
     body_html = _strip_mso_css(body_html)
+    body_html = _normalize_tables(body_html)
     body_html = _resolve_cid_images(msg, body_html)
 
     # --- Metadaten-Header-Block als HTML ---
