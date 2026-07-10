@@ -116,6 +116,11 @@ def _format_date_german(date_str: str) -> str:
 # cid:-Bilder auflösen (multipart/related Inline-Bilder)
 # ---------------------------------------------------------------------------
 
+def _strip_mso_css(html: str) -> str:
+    """Entfernt @list CSS-Regeln (MSO-proprietär), die xhtml2pdf nicht parsen kann."""
+    return re.sub(r'@list\b[^{]*\{[^{}]*\}', '', html, flags=re.DOTALL | re.IGNORECASE)
+
+
 def _resolve_cid_images(msg: Message, html: str) -> str:
     """
     Ersetzt cid:-Referenzen in HTML durch base64-kodierte data:-URIs.
@@ -254,6 +259,10 @@ def _extract_attachments(msg: Message) -> list[tuple[str, bytes]]:
         # multipart/* enthält keine Nutzdaten
         if content_type.startswith("multipart/"):
             continue
+        # Inline-Bilder (via cid: im HTML referenziert) überspringen —
+        # sie sind bereits im PDF-Body gerendert, nicht als Anhang speichern
+        if part.get("Content-ID"):
+            continue
 
         if filename:
             filename = decode_mime_header(filename)
@@ -324,6 +333,7 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
 
     # --- Body extrahieren und cid:-Bilder auflösen ---
     body_html = _extract_body(msg)
+    body_html = _strip_mso_css(body_html)
     body_html = _resolve_cid_images(msg, body_html)
 
     # --- Metadaten-Header-Block als HTML ---

@@ -32,18 +32,10 @@ sys.path.insert(0, str(_project_root / "src"))
 from converter import _block_external_urls, _resolve_cid_images, convert_and_save
 from utils import build_pdf_filename
 
-# Minimales 1×1-Pixel-PNG (valide Binärdaten für MIME-Bild-Tests)
-_MINIMAL_PNG = bytes([
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-    0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
-    0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
-    0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-    0x44, 0xAE, 0x42, 0x60, 0x82,
-])
+# Valides 1×1-Pixel-PNG (grau) — von PIL/xhtml2pdf dekodierbar
+_MINIMAL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=="
+)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +249,57 @@ class TestAttachments(unittest.TestCase):
         with pikepdf.open(pdf_path) as pdf:
             self.assertEqual(len(pdf.attachments), 0,
                               "Leere E-Mail hat unerwartete Attachments")
+
+    def test_4_3_inline_bild_nicht_als_anhang(self):
+        """Inline-Bilder (Content-ID) dürfen nicht als PDF-Anhang erscheinen."""
+        msg = MIMEMultipart("related")
+        msg["From"] = "sender@example.com"
+        msg["To"] = "empf@example.com"
+        msg["Subject"] = "Mit Inline-Bild"
+        msg["Date"] = "Thu, 11 Jun 2026 14:00:00 +0200"
+        msg.attach(MIMEText('<p><img src="cid:logo@example.com"></p>', "html", "utf-8"))
+
+        # Inline-Bild mit Content-ID (z.B. Logo in E-Mail-Signatur)
+        img_part = MIMEImage(_MINIMAL_PNG, "png")
+        img_part.add_header("Content-ID", "<logo@example.com>")
+        img_part.add_header("Content-Disposition", "inline", filename="logo.png")
+        msg.attach(img_part)
+
+        pdf_path = self.out / "test_4_3_inline.pdf"
+        convert_and_save(msg, pdf_path)
+
+        with pikepdf.open(pdf_path) as pdf:
+            self.assertEqual(len(pdf.attachments), 0,
+                              "Inline-Bild fälschlicherweise als PDF-Anhang eingebettet")
+
+    def test_4_3_inline_bild_und_echter_anhang(self):
+        """Inline-Bild wird nicht eingebettet, echter Anhang schon."""
+        msg = MIMEMultipart("mixed")
+        msg["From"] = "sender@example.com"
+        msg["To"] = "empf@example.com"
+        msg["Subject"] = "Bild + Anhang"
+        msg["Date"] = "Thu, 11 Jun 2026 14:00:00 +0200"
+
+        related = MIMEMultipart("related")
+        related.attach(MIMEText('<p><img src="cid:logo@example.com"></p>', "html", "utf-8"))
+        img_part = MIMEImage(_MINIMAL_PNG, "png")
+        img_part.add_header("Content-ID", "<logo@example.com>")
+        img_part.add_header("Content-Disposition", "inline", filename="logo.png")
+        related.attach(img_part)
+        msg.attach(related)
+
+        att = MIMEApplication(b"Echter Anhang")
+        att.add_header("Content-Disposition", "attachment", filename="dokument.pdf")
+        msg.attach(att)
+
+        pdf_path = self.out / "test_4_3_mixed.pdf"
+        convert_and_save(msg, pdf_path)
+
+        with pikepdf.open(pdf_path) as pdf:
+            self.assertNotIn("logo.png", pdf.attachments,
+                              "Inline-Bild fälschlicherweise als Anhang eingebettet")
+            self.assertIn("dokument.pdf", pdf.attachments,
+                          "Echter Anhang fehlt im PDF")
 
 
 # ---------------------------------------------------------------------------
