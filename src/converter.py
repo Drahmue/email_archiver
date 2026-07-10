@@ -3,7 +3,7 @@ converter.py — E-Mail-zu-PDF-Konvertierung für email_archiver
 
 Verarbeitungsablauf:
   1. E-Mail-Body extrahieren (HTML bevorzugt, Fallback: text/plain → HTML-Wrapper)
-  2. E-Mail-Metadaten (Von, Betreff, Datum) als sichtbaren Header-Block einbetten
+  2. E-Mail-Metadaten (Von, An, Betreff, Gesendet) als sichtbaren Header-Block einbetten
   3. HTML → PDF via xhtml2pdf (externe URLs werden blockiert)
   4. Anhänge aus der E-Mail extrahieren
   5. Anhänge als EmbeddedFile in das PDF einbetten via pikepdf
@@ -19,7 +19,9 @@ import io
 import logging
 import re
 from email.message import Message
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pikepdf
 from pikepdf import AttachedFileSpec
@@ -88,6 +90,26 @@ def _block_external_urls(uri: str, rel: str) -> str | None:
         logger.debug(f"Externe URL blockiert (Datenschutz): {uri}")
         return None
     return uri
+
+
+# ---------------------------------------------------------------------------
+# Datum in deutsches Langformat konvertieren
+# ---------------------------------------------------------------------------
+
+_GERMAN_MONTHS = {
+    1: "Januar", 2: "Februar", 3: "März", 4: "April",
+    5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
+    9: "September", 10: "Oktober", 11: "November", 12: "Dezember"
+}
+
+
+def _format_date_german(date_str: str) -> str:
+    """Konvertiert einen RFC-2822-Datums-String in deutsches Langformat (z.B. '15. Juni 2026')."""
+    try:
+        dt = parsedate_to_datetime(date_str).astimezone(ZoneInfo("Europe/Berlin"))
+        return f"{dt.day}. {_GERMAN_MONTHS[dt.month]} {dt.year}"
+    except Exception:
+        return date_str
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +318,9 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
     # --- Metadaten aus E-Mail-Headern ---
     subject = decode_mime_header(msg.get("Subject", "(kein Betreff)"))
     from_addr = decode_mime_header(msg.get("From", ""))
+    to_addr = decode_mime_header(msg.get("To", ""))
     date_str = msg.get("Date", "")
+    date_german = _format_date_german(date_str)
 
     # --- Body extrahieren und cid:-Bilder auflösen ---
     body_html = _extract_body(msg)
@@ -312,8 +336,9 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
         "font-size: 9pt;"
         'color: #444444;">'
         f"<strong>Von:</strong> {html_module.escape(from_addr)}<br>"
+        f"<strong>An:</strong> {html_module.escape(to_addr)}<br>"
         f"<strong>Betreff:</strong> {html_module.escape(subject)}<br>"
-        f"<strong>Datum:</strong> {html_module.escape(date_str)}"
+        f"<strong>Gesendet:</strong> {html_module.escape(date_german)}"
         "</div>"
     )
 
