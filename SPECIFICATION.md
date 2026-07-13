@@ -12,10 +12,12 @@ Das Skript verbindet sich per IMAP mit dem Strato-Mailserver, verarbeitet alle E
 ### Funktional
 - Verbindung zum Strato IMAP-Server (SSL, Port 993)
 - Quellordner und Zielordner sind IMAP-Ordner (konfigurierbar in INI)
-- Jede E-Mail wird als einzelne PDF-Datei gespeichert
-- PDF-Inhalt ist durchsuchbar (Text-basiert, kein OCR nötig — E-Mail-Text ist bereits Text)
-- E-Mail-Anhänge werden als eingebettete Dateianlagen in das PDF eingebettet (sichtbar im Büroklammer-Panel des PDF-Readers, z.B. Adobe Acrobat oder PDF-XChange)
+- Thread-Deduplizierung: von einem E-Mail-Thread im selben Batch wird nur die neueste Antwort als PDF archiviert
+- Jede relevante E-Mail wird als einzelne PDF-Datei gespeichert
+- PDF-Inhalt ist durchsuchbar (Text-basiert, kein OCR nötig)
+- E-Mail-Anhänge werden als eingebettete Dateianlagen in das PDF eingebettet (sichtbar im Büroklammer-Panel des PDF-Readers)
 - Nach erfolgreicher Konvertierung: E-Mail per IMAP in den konfigurierten Zielordner verschieben
+- Externe URLs werden während der PDF-Erzeugung blockiert (Datenschutz / Tracking-Schutz)
 - Fehlerbehandlung: fehlerhafte E-Mails überspringen, Fehler ins Log schreiben, mit nächster E-Mail weitermachen
 - Alle Pfade und Zugangsdaten in `config/config.ini` (nicht im Code)
 
@@ -56,7 +58,7 @@ Format: `YYYY-MM-DD_HH-MM_Absender.pdf`
 
 Beispiele:
 - `2026-06-11_14-30_noreply@example.com.pdf`
-- `2026-06-11_09-15_Max_Mustermann.pdf`
+- `2026-07-10_12-43_Steinel_Oliver.pdf`
 
 Regeln:
 - Datum und Uhrzeit aus dem `Date:`-Header der E-Mail (UTC → lokale Zeit Europe/Berlin)
@@ -75,26 +77,20 @@ Regeln:
 |-------|---------|-------------|
 | IMAP-Verbindung | `imapclient` | `pip install imapclient` |
 | E-Mail parsen | `email` | stdlib |
-| HTML parsen/transformieren | `beautifulsoup4` | `pip install beautifulsoup4` |
 | INI lesen | `configparser` | stdlib |
 | Dateipfade | `pathlib` | stdlib |
 | Logging | `logging` | stdlib |
-| HTML → PDF | `xhtml2pdf` (pisa) | `pip install xhtml2pdf` |
-| Font-Registrierung | `reportlab` | `pip install reportlab` |
+| HTML → PDF | `playwright` (Chromium) | `pip install playwright && playwright install chromium` |
 | PDF-Anhänge einbetten | `pikepdf` | `pip install pikepdf` |
 | Zeitzone | `zoneinfo` | stdlib (Python 3.9+) |
-
-**Hinweis:** `weasyprint` war ursprünglich geplant, wurde aber durch `xhtml2pdf` ersetzt — xhtml2pdf rendert Umlaute korrekt wenn Arial als TTF-Font via reportlab registriert ist.
+| Utilities | `ahlib` | `pip install git+https://github.com/Drahmue/ahlib.git` |
 
 ### requirements.txt
 
 ```
-imapclient
-xhtml2pdf
-reportlab
 pikepdf
-beautifulsoup4
-PyPDF2
+imapclient
+playwright
 git+https://github.com/Drahmue/ahlib.git
 ```
 
@@ -103,10 +99,10 @@ git+https://github.com/Drahmue/ahlib.git
 ```
 email_archiver/
 ├── src/
-│   ├── main.py           # Einstiegspunkt
+│   ├── main.py           # Einstiegspunkt, Thread-Deduplizierung
 │   ├── imap_client.py    # IMAP-Verbindung, E-Mails abrufen, verschieben
-│   ├── converter.py      # EML → PDF (xhtml2pdf + pikepdf)
-│   └── utils.py          # Dateiname sanitisieren, Logging-Setup
+│   ├── converter.py      # EML → PDF (Playwright + pikepdf)
+│   └── utils.py          # Dateiname sanitisieren, MIME-Header dekodieren
 ├── tests/
 │   ├── test_stage1_date_format.py   # Unit-Tests _format_date_german()
 │   ├── test_stage2_pdf_content.py   # PDF-Inhalt + correspondence_cleanup-Regex
@@ -117,6 +113,7 @@ email_archiver/
 │   └── config.ini.template
 ├── logs/
 ├── data/
+├── run_archiver.ps1
 ├── requirements.txt
 ├── README.md
 ├── CHANGELOG.md
@@ -125,33 +122,34 @@ email_archiver/
 └── SPECIFICATION.md
 ```
 
-### Verarbeitungsablauf pro E-Mail
+### Verarbeitungsablauf pro Batch
 
 ```
-1. IMAP: E-Mail aus source_folder abrufen
-2. email.message_from_bytes() → Message-Objekt
-3. Body extrahieren (_extract_body):
-   - Bevorzugt: text/html Part
-   - Fallback: text/plain Part (in einfaches HTML wrappen)
-4. HTML-Vorverarbeitung:
-   a. _strip_mso_css()      — @list-CSS-At-Regeln entfernen (brechen xhtml2pdf)
-   b. _normalize_tables()   — Outlook-Tabellen normalisieren (Rahmen, Breite)
-   c. _resolve_cid_images() — cid:-Referenzen durch base64-data:-URIs ersetzen
-5. Metadaten-Header-Block aufbauen (Von / An / Betreff / Gesendet in deutschem Format)
-6. Vollständiges HTML-Dokument zusammensetzen (mit Arial-CSS, Meta-Block, Body)
-7. xhtml2pdf: HTML → PDF (externe URLs via link_callback blockiert)
-8. Anhänge extrahieren (_extract_attachments):
-   - Parts mit Content-ID überspringen (Inline-Bilder bereits im PDF-Body)
-9. pikepdf: Anhänge als EmbeddedFile in das PDF einbetten
-10. PDF in output_folder speichern (Dateiname nach Konvention)
-11. IMAP: E-Mail in processed_folder verschieben (IMAP MOVE oder COPY+DELETE)
-12. Log-Eintrag: Erfolg mit Dateiname
+1. IMAP: Alle E-Mails aus source_folder abrufen
+2. Thread-Deduplizierung (main.py):
+   - References/In-Reply-To-Header aller E-Mails auswerten
+   - E-Mails, deren Message-ID von einer anderen im Batch referenziert wird → kein PDF
+   - Überholte E-Mails werden trotzdem nach processed_folder verschoben
+3. Pro E-Mail (zu verarbeiten):
+   a. Body extrahieren (_extract_body): bevorzugt text/html, Fallback text/plain in <pre>
+   b. cid:-Inline-Bilder als base64 data:-URIs einbetten (_resolve_cid_images)
+   c. Metadaten-Header-Block aufbauen (Von / An / Betreff / Gesendet in deutschem Format)
+   d. Print-CSS injizieren (inkl. page:auto !important für Outlook WordSection)
+   e. Playwright: page.set_content() → page.pdf() (A4, 1–1.5 cm Ränder)
+      - Externe URLs (http/https/protokoll-relativ) via page.route() blockiert
+      - data:-URIs werden intern verarbeitet, nicht blockiert
+   f. PDF in output_folder speichern (Dateiname nach Konvention)
+   g. Anhänge extrahieren (_extract_attachments):
+      - Parts mit Content-ID überspringen (Inline-Bilder bereits im PDF-Body)
+   h. pikepdf: Anhänge als EmbeddedFile einbetten
+   i. IMAP: E-Mail in processed_folder verschieben (IMAP MOVE oder COPY+DELETE)
+   j. Log-Eintrag: Erfolg mit Dateiname
 ```
 
 ### Fehlerbehandlung
 
 ```
-- Exception pro E-Mail: logging.error() mit Subject + Message-ID + Traceback
+- Exception pro E-Mail: logging.error() mit Subject + Traceback
 - E-Mail bleibt im source_folder (wird nicht verschoben)
 - Skript läuft mit nächster E-Mail weiter
 - Am Ende: Zusammenfassung im Log (X erfolgreich, Y Fehler)
@@ -180,40 +178,18 @@ Regex-Muster von correspondence_cleanup (müssen matchen):
 
 ---
 
-## Tabellen-Normalisierung
-
-Outlook-HTML enthält zwei Typen von Tabellen:
-
-| Typ | Erkennungsmerkmal | Behandlung |
-|-----|------------------|------------|
-| Datentabelle | `border="1"` (HTML-Attr.) ohne `border:none` im Style | graue 1px-Rahmen, `width:100%` |
-| Layout-Tabelle | `border:none` im CSS-Style (auch wenn `border="1"` im HTML-Attr.) | Rahmen auf 0 setzen, Breite nicht ändern |
-
-In beiden Fällen: `width` aus HTML-Attribut und style-String der `<td>`/`<th>` entfernen.
-
----
-
-## Logging
-
-- Log-Datei: `logs/email_archiver.log` (rotating, max 5 MB, 3 Backups)
-- Konsole: gleichzeitig ausgeben
-- Format: `2026-06-11 14:30:15 [INFO] Verarbeite: "Betreff" von Absender`
-
----
-
 ## Implementierungshinweise
 
 ### IMAP-Ordnernamen mit Umlauten
 `imapclient` behandelt die modified-UTF-7-Kodierung (RFC 3501) von Ordnernamen automatisch.
-`imaplib` direkt würde manuelle Kodierung erfordern.
 
-### xhtml2pdf HTML-Rendering
-- Inline-Bilder als base64 `data:`-URIs werden unterstützt
-- Externe Ressourcen (URLs) via `link_callback` blockieren (Datenschutz / Tracking-Schutz)
-- Font: Arial TTF via `pdfmetrics.registerFont(TTFont(...))` registrieren — kein `@font-face` nötig
-- `border:none` in CSS wird von xhtml2pdf nicht immer korrekt ausgewertet — `border="0"` HTML-Attribut zusätzlich setzen
-- `border-collapse:collapse` kombiniert mit impliziten Rahmen erzeugt in xhtml2pdf sichtbare Linien
-- `min-width` wird nicht unterstützt — `width:100%` verwenden
+### Playwright HTML→PDF
+- Browser-Singleton mit atexit-Cleanup (`_get_browser()` / `_shutdown_browser()`)
+- `page.route("**/*", handler)` fängt `data:`-URIs **nicht** ab — sie werden intern verarbeitet
+- Nur `http://`, `https://`, `//` blockieren; alle anderen Schemata durchlassen
+- Outlook-HTML enthält `div.WordSection1 { page: WordSection1; }` — Chromium fügt dabei
+  einen Seitenumbruch ein; Fix: `div[class*='WordSection'] { page: auto !important; }`
+- pypdf2 extrahiert Chromium-Ligaturen (z.B. `ff`) manchmal mit Leerzeichen → `\s*` im Regex
 
 ### pikepdf Anhänge einbetten
 ```python
@@ -222,11 +198,15 @@ with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
     pdf.attachments[filename] = filespec
     pdf.save(pdf_path)
 ```
-Anhänge sind im Büroklammer-Panel sichtbar (Adobe Acrobat, PDF-XChange).
 Lesen: `pdf.attachments[name].get_file().read_bytes()` (nicht `.read_bytes()` direkt).
 
 ### IMAP MOVE-Befehl
 Strato unterstützt IMAP MOVE (RFC 6851). Fallback: COPY + STORE \Deleted + EXPUNGE.
+
+### Thread-Deduplizierung
+Outlook und Thunderbird zitieren bei jedem Reply die gesamte Vorgeschichte im Body.
+Eine E-Mail gilt als überholt, wenn ihre `Message-ID` im `References`- oder `In-Reply-To`-Header
+einer anderen E-Mail im selben Batch auftaucht. Nur Blätter des Thread-Baums erhalten ein PDF.
 
 ---
 

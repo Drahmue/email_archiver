@@ -13,21 +13,22 @@ weiterverarbeitet werden.
 
 1. IMAP-Verbindung herstellen (Strato, SSL)
 2. Alle E-Mails im `source_folder` abrufen
-3. Pro E-Mail:
-   - HTML-Body extrahieren (Fallback: plain-text)
-   - HTML vorverarbeiten: MSO-CSS entfernen, Tabellen normalisieren, cid:-Bilder auflösen
+3. Thread-Deduplizierung: E-Mails, die von einer neueren Antwort im selben Batch überholt werden, erhalten kein PDF (werden aber trotzdem in `processed_folder` verschoben)
+4. Pro E-Mail:
+   - HTML-Body extrahieren (Fallback: plain-text in `<pre>`)
+   - Inline-Bilder (`cid:`-Referenzen) als `data:`-URIs einbetten
    - Metadaten-Header einbetten (Von / An / Betreff / Gesendet)
-   - PDF erzeugen via xhtml2pdf
+   - PDF erzeugen via Playwright (Headless Chromium) — externe URLs werden blockiert
    - Dateianhänge als EmbeddedFile in die PDF einbetten (pikepdf)
    - PDF speichern unter `JJJJ-MM-TT_HH-MM_Absender.pdf`
-4. E-Mail in `processed_folder` verschieben
-5. Fehler werden geloggt, Verarbeitung läuft weiter
+5. E-Mail in `processed_folder` verschieben
+6. Fehler werden geloggt, Verarbeitung läuft weiter
 
 ### PDF-Dateiname
 
 ```
 JJJJ-MM-TT_HH-MM_Vorname_Nachname.pdf
-Beispiel: 2026-07-09_15-45_Steinel_Oliver.pdf
+Beispiel: 2026-07-10_12-43_Steinel_Oliver.pdf
 ```
 
 Datum und Uhrzeit aus dem E-Mail-Header (`Date:`), Zeitzone Europe/Berlin.
@@ -38,6 +39,7 @@ Datum und Uhrzeit aus dem E-Mail-Header (`Date:`), Zeitzone Europe/Berlin.
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 ## Konfiguration
@@ -62,7 +64,11 @@ level = INFO
 
 ## Verwendung
 
-```bash
+```powershell
+# PowerShell-Startskript (empfohlen):
+.\run_archiver.ps1
+
+# Oder direkt:
 python src/main.py
 ```
 
@@ -72,7 +78,8 @@ Log wird unter `logs/email_archiver_JJJJMMTT_HHMMSS.log` gespeichert.
 
 - Python 3.11+
 - Windows (Zeitzone Europe/Berlin via `zoneinfo`)
-- Pakete: `xhtml2pdf`, `beautifulsoup4`, `pikepdf`, `imapclient`, `ahlib`
+- Pakete: `playwright`, `pikepdf`, `imapclient`, `ahlib`
+- Chromium (via `playwright install chromium`)
 
 ## Kompatibilität mit correspondence_cleanup
 
