@@ -29,7 +29,7 @@ _project_root = Path(__file__).parent.parent
 os.chdir(_project_root)
 sys.path.insert(0, str(_project_root / "src"))
 
-from converter import _block_external_urls, _resolve_cid_images, convert_and_save
+from converter import _resolve_cid_images, convert_and_save
 from utils import build_pdf_filename
 
 # Valides 1×1-Pixel-PNG (grau) — von PIL/xhtml2pdf dekodierbar
@@ -110,32 +110,11 @@ class TestCidImages(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 4.2 — URL-Blockierung
+# 4.2 — URL-Blockierung (Playwright-Ebene)
 # ---------------------------------------------------------------------------
 
 class TestUrlBlocking(unittest.TestCase):
-    """_block_external_urls() blockiert HTTP/HTTPS, erlaubt lokale Pfade."""
-
-    def test_4_2_https_blockiert(self):
-        result = _block_external_urls("https://tracker.example.com/pixel.gif", "")
-        self.assertIsNone(result, "HTTPS-URL nicht blockiert")
-
-    def test_4_2_http_blockiert(self):
-        result = _block_external_urls("http://example.com/image.png", "")
-        self.assertIsNone(result, "HTTP-URL nicht blockiert")
-
-    def test_4_2_protocol_relative_blockiert(self):
-        result = _block_external_urls("//cdn.example.com/style.css", "")
-        self.assertIsNone(result, "Protokoll-relative URL nicht blockiert")
-
-    def test_4_2_lokaler_pfad_erlaubt(self):
-        result = _block_external_urls("/local/path/image.png", "")
-        self.assertIsNotNone(result, "Lokaler Pfad fälschlicherweise blockiert")
-
-    def test_4_2_data_uri_erlaubt(self):
-        data_uri = "data:image/png;base64,iVBORw0KGgo="
-        result = _block_external_urls(data_uri, "")
-        self.assertIsNotNone(result, "data:-URI fälschlicherweise blockiert")
+    """Externe URLs werden auf Playwright-Netzwerkebene blockiert."""
 
     def test_4_2_email_mit_externer_url_kein_absturz(self):
         """E-Mail mit externem Tracking-Pixel darf keinen Absturz verursachen."""

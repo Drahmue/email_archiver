@@ -16,8 +16,10 @@ Verwendung:
 """
 
 import os
+import re
 import sys
 from datetime import datetime
+from email.message import Message
 from pathlib import Path
 
 # --- Arbeitsverzeichnis auf Projektwurzel setzen, src/ zu sys.path hinzufügen ---
@@ -71,6 +73,59 @@ def ensure_output_folder(folder_path: str) -> Path:
     return output
 
 
+def _extract_message_id(msg: Message) -> str | None:
+    """Gibt die bereinigte Message-ID zurück (ohne spitze Klammern), oder None."""
+    mid = msg.get("Message-ID", "").strip()
+    return mid.strip("<>") if mid else None
+
+
+def _extract_referenced_ids(msg: Message) -> set[str]:
+    """Sammelt alle Message-IDs aus References- und In-Reply-To-Headern."""
+    ids: set[str] = set()
+    for header in ("References", "In-Reply-To"):
+        for match in re.findall(r"<([^>]+)>", msg.get(header, "")):
+            ids.add(match)
+    return ids
+
+
+def filter_thread_superseded(
+    emails: list[tuple[int, Message]], logger
+) -> tuple[list[tuple[int, Message]], list[tuple[int, Message]]]:
+    """
+    Trennt E-Mails im Batch in zu-verarbeitende und überholte auf.
+
+    Outlook und Thunderbird zitieren bei jedem Reply die gesamte Vorgeschichte im
+    Body. Dadurch enthält die jüngste E-Mail eines Threads alle älteren vollständig.
+    Eine E-Mail gilt als überholt, wenn ihre Message-ID im References- oder
+    In-Reply-To-Header einer anderen E-Mail im selben Batch auftaucht.
+
+    Args:
+        emails: Liste von (IMAP-ID, geparste E-Mail) aus fetch_emails()
+        logger: Logger für Überspring-Meldungen
+
+    Returns:
+        Tupel (zu_verarbeiten, überholte):
+          - zu_verarbeiten: Blätter des Thread-Baums → PDF erzeugen + verschieben
+          - überholte: ältere Glieder der Kette → nur verschieben, kein PDF
+    """
+    referenced_ids: set[str] = set()
+    for _, msg in emails:
+        referenced_ids.update(_extract_referenced_ids(msg))
+
+    to_process = []
+    superseded = []
+    for msg_id, msg in emails:
+        own_id = _extract_message_id(msg)
+        if own_id and own_id in referenced_ids:
+            subject = decode_mime_header(msg.get("Subject", "(kein Betreff)"))
+            logger.info(f'  Übersprungen (von neuerer Antwort im Batch überholt): "{subject}"')
+            superseded.append((msg_id, msg))
+        else:
+            to_process.append((msg_id, msg))
+
+    return to_process, superseded
+
+
 def process_emails(
     client,
     source_folder: str,
@@ -99,6 +154,15 @@ def process_emails(
     if not emails:
         logger.info("Keine E-Mails zur Verarbeitung gefunden.")
         return 0, 0
+
+    emails, superseded = filter_thread_superseded(emails, logger)
+
+    # Überholte E-Mails verschieben ohne PDF zu erzeugen
+    for msg_id, msg in superseded:
+        try:
+            imap.move_email(client, msg_id, processed_folder)
+        except Exception as exc:
+            logger.error(f"  FEHLER beim Verschieben überholter E-Mail (ID={msg_id}): {exc}")
 
     success_count = 0
     error_count = 0

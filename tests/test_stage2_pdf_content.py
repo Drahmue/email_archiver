@@ -42,7 +42,10 @@ def extract_pdf_text(pdf_path: Path) -> str:
     """Extrahiert den Volltext eines PDFs mit PyPDF2 (wie correspondence_cleanup)."""
     with open(pdf_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
+        raw = "\n".join(page.extract_text() or "" for page in reader.pages)
+    # Chromium-PDFs setzen Ligatur-Glyphen mit Kerning; pypdf2 schiebt dann
+    # Leerzeichen ein (z.B. "ff" → "f f"). Mehrfache Leerzeichen kollabieren.
+    return re.sub(r" {2,}", " ", raw)
 
 
 def make_simple_email(
@@ -91,7 +94,8 @@ class TestPdfMetaHeader(unittest.TestCase):
 
         self.assertRegex(text, r"Von:.+Max Mustermann",   "Von: fehlt oder falsch")
         self.assertRegex(text, r"An:.+john@example\.com", "An: fehlt oder falsch")
-        self.assertRegex(text, r"Betreff:.+Testbetreff",  "Betreff: fehlt oder falsch")
+        # pypdf2 extrahiert Chromium-Ligaturglyphen manchmal mit Leerzeichen (ff → f f)
+        self.assertRegex(text, r"Betreff:.+Testbetref\s*f", "Betreff: fehlt oder falsch")
         self.assertRegex(text, r"Gesendet:.+11\. Juni 2026", "Gesendet: fehlt oder falsches Datum")
 
     def test_2_2_kein_empfaenger_kein_absturz(self):
