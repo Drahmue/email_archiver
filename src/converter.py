@@ -15,6 +15,8 @@ import base64
 import html as html_module
 import logging
 import re
+import urllib.error
+import urllib.request
 from email.message import Message
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -125,6 +127,44 @@ def _resolve_cid_images(msg: Message, html: str) -> str:
         return cid_map.get(cid, match.group(0))
 
     return re.sub(r'cid:([^\s"\']+)', replace_cid, html, flags=re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Externe Bilder herunterladen und einbetten
+# ---------------------------------------------------------------------------
+
+def _resolve_external_images(html: str) -> str:
+    """
+    Lädt extern referenzierte Bilder herunter und bettet sie als data:-URIs ein.
+
+    Ersetzt src="https://..."-Attribute in img-Tags durch data:-URIs, damit
+    externe Bilder im PDF erscheinen, obwohl Playwright alle externen HTTP-Requests
+    blockiert. Nicht ladbare Bilder werden unverändert belassen.
+
+    Args:
+        html (str): HTML-String mit potentiellen externen Bild-URLs
+
+    Returns:
+        str: HTML-String mit eingebetteten Bildern (data:-URIs)
+    """
+    def _download(url: str) -> str | None:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                mime = resp.headers.get_content_type() or "image/jpeg"
+                data = resp.read()
+            encoded = base64.b64encode(data).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
+        except Exception as exc:
+            logger.debug("Externes Bild nicht ladbar (%s): %s", url, exc)
+            return None
+
+    def _replace(m: re.Match) -> str:
+        quote, url = m.group(1), m.group(2)
+        data_uri = _download(url)
+        return f"src={quote}{data_uri}{quote}" if data_uri else m.group(0)
+
+    return re.sub(r'src=(["\'])(https?://[^"\']+)\1', _replace, html)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +300,7 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
       1. Metadaten aus E-Mail-Headern extrahieren
       2. HTML-Body extrahieren
       3. cid:-Inline-Bilder als data:-URIs einbetten
+      3b. Externe Bilder (http/https) herunterladen und als data:-URIs einbetten
       4. Metadaten-Header-Block (Von/An/Betreff/Gesendet) einfügen
       5. HTML → PDF via Playwright/Chromium
          - Externe URLs (http/https) werden auf Netzwerkebene blockiert
@@ -281,9 +322,10 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
     date_str  = msg.get("Date", "")
     date_german = _format_date_german(date_str)
 
-    # --- Body extrahieren + cid:-Bilder auflösen ---
+    # --- Body extrahieren + cid:-Bilder auflösen + externe Bilder einbetten ---
     body_html = _extract_body(msg)
     body_html = _resolve_cid_images(msg, body_html)
+    body_html = _resolve_external_images(body_html)
 
     # --- Metadaten-Header-Block als HTML ---
     meta_block = (
