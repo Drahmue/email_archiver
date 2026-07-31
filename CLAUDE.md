@@ -56,7 +56,7 @@ IMAP-basierte Lösung (kein Outlook erforderlich).
 ### Konvertierungs-Pipeline (converter.py)
 1. **`_extract_body(msg)`** — HTML-Part extrahieren (Fallback: text/plain in `<pre>`)
 2. **`_resolve_cid_images(msg, html)`** — Ersetzt `cid:`-Referenzen durch base64-`data:`-URIs (Inline-Bilder in multipart/related)
-2b. **`_resolve_external_images(html)`** — Lädt externe `<img src="https://...">`-Bilder via urllib herunter und bettet sie als data:-URIs ein (Timeout 10 s; Fehler werden geloggt, Bild bleibt als externer Link)
+2b. **`_resolve_external_images(html)`** — Lädt externe Ressourcen via urllib herunter und bettet sie als data:-URIs ein: (a) `<img src="https://...">` HTML-Attribute, (b) `url(https://...)` in CSS-Hintergrundbildern (`<style>`-Blöcke + inline `style`-Attribute). Gleiche URLs werden gecacht. Timeout 10 s; Fehler werden geloggt, Ressource bleibt als externer Link
 3. Metadaten-Header-Block + Druck-CSS in HTML injizieren
 4. Playwright: `page.set_content()` → `page.pdf()` (A4, 1–1.5 cm Ränder)
    - Externe URLs (`http://`, `https://`, `//`) via `page.route()` geblockt

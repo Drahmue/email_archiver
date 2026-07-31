@@ -155,15 +155,6 @@ def process_emails(
         logger.info("Keine E-Mails zur Verarbeitung gefunden.")
         return 0, 0
 
-    emails, superseded = filter_thread_superseded(emails, logger)
-
-    # Überholte E-Mails verschieben ohne PDF zu erzeugen
-    for msg_id, msg in superseded:
-        try:
-            imap.move_email(client, msg_id, processed_folder)
-        except Exception as exc:
-            logger.error(f"  FEHLER beim Verschieben überholter E-Mail (ID={msg_id}): {exc}")
-
     success_count = 0
     error_count = 0
 

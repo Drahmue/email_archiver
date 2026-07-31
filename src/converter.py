@@ -137,34 +137,53 @@ def _resolve_external_images(html: str) -> str:
     """
     Lädt extern referenzierte Bilder herunter und bettet sie als data:-URIs ein.
 
-    Ersetzt src="https://..."-Attribute in img-Tags durch data:-URIs, damit
-    externe Bilder im PDF erscheinen, obwohl Playwright alle externen HTTP-Requests
-    blockiert. Nicht ladbare Bilder werden unverändert belassen.
+    Behandelt:
+    - src="https://..."-Attribute in HTML-Tags (img, input usw.)
+    - url(...)-Referenzen in CSS (sowohl in <style>-Blöcken als auch in
+      inline style-Attributen), z.B. background-image: url('https://...')
+
+    Nicht ladbare Ressourcen bleiben unverändert. Gleiche URLs werden nur
+    einmal heruntergeladen (Cache).
 
     Args:
         html (str): HTML-String mit potentiellen externen Bild-URLs
 
     Returns:
-        str: HTML-String mit eingebetteten Bildern (data:-URIs)
+        str: HTML-String mit eingebetteten Ressourcen als data:-URIs
     """
+    _cache: dict[str, str | None] = {}
+
     def _download(url: str) -> str | None:
+        if url in _cache:
+            return _cache[url]
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 mime = resp.headers.get_content_type() or "image/jpeg"
                 data = resp.read()
             encoded = base64.b64encode(data).decode("ascii")
-            return f"data:{mime};base64,{encoded}"
+            result = f"data:{mime};base64,{encoded}"
         except Exception as exc:
-            logger.debug("Externes Bild nicht ladbar (%s): %s", url, exc)
-            return None
+            logger.debug("Externe Ressource nicht ladbar (%s): %s", url, exc)
+            result = None
+        _cache[url] = result
+        return result
 
-    def _replace(m: re.Match) -> str:
+    def _replace_src(m: re.Match) -> str:
         quote, url = m.group(1), m.group(2)
         data_uri = _download(url)
         return f"src={quote}{data_uri}{quote}" if data_uri else m.group(0)
 
-    return re.sub(r'src=(["\'])(https?://[^"\']+)\1', _replace, html)
+    def _replace_css_url(m: re.Match) -> str:
+        url = m.group(1)
+        data_uri = _download(url)
+        return f"url('{data_uri}')" if data_uri else m.group(0)
+
+    # src-Attribute in HTML-Tags
+    html = re.sub(r'src=(["\'])(https?://[^"\']+)\1', _replace_src, html)
+    # url()-Referenzen in CSS (style-Attribute und <style>-Blöcke)
+    html = re.sub(r'url\(["\']?(https?://[^"\')\s]+)["\']?\)', _replace_css_url, html)
+    return html
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +319,7 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
       1. Metadaten aus E-Mail-Headern extrahieren
       2. HTML-Body extrahieren
       3. cid:-Inline-Bilder als data:-URIs einbetten
-      3b. Externe Bilder (http/https) herunterladen und als data:-URIs einbetten
+      3b. Externe Bilder + CSS-Hintergrundbilder (http/https) herunterladen und als data:-URIs einbetten
       4. Metadaten-Header-Block (Von/An/Betreff/Gesendet) einfügen
       5. HTML → PDF via Playwright/Chromium
          - Externe URLs (http/https) werden auf Netzwerkebene blockiert
