@@ -4,11 +4,17 @@
 
 ## Offen
 
+- [ ] **Leere letzte Seite** im PDF untersuchen (z.B. Revolut-Mail: Seite 3 leer) — offen, 2026-10-18
+- [ ] **Übrige PDFs aus Testlauf 2026-10-18 prüfen** (`2026-10-15_*_Dr_Alexander_Haunschild.pdf`), ggf. bei Bedarf neu erzeugen — offen, 2026-10-18
+- [ ] **Ältere Archiv-PDFs auf fehlenden Fließtext prüfen** (Webfont-Timing-Bug vor `f163b88`, betrifft Mails mit `@font-face`) — offen, 2026-10-18
+- [ ] **PyPDF2 → pypdf** in Tests migrieren (DeprecationWarning) — offen, 2026-10-18
+
 ---
 
 ## Erledigt
 
 ### Setup & Konfiguration
+- [x] **Zielordner auf Netzlaufwerk** `\\HAUSERVER\Dataserver\_datahub\Sammelordner\Korrespondenz` (2026-10-18)
 - [x] **`run_archiver.ps1`** — PowerShell-Startskript (2026-07-13)
 - [x] **`README.md` ausgebaut** (2026-07-10) — Projektbeschreibung, Installation, Konfiguration, correspondence_cleanup-Kompatibilität
 - [x] **Projektstruktur initialisiert** (2026-06-12, Commit `ff5b1eb`)
@@ -25,6 +31,8 @@
 - [x] **Ordnerstruktur** angelegt: `src/`, `tests/`, `logs/`, `data/` (2026-06-12)
 
 ### HTML→PDF-Engine & PDF-Qualität
+- [x] **Fix: Fließtext fehlte bei Webfont-Mails** (2026-10-18, `f163b88`) — Warten auf `document.fonts.ready` vor `page.pdf()`
+- [x] **Fix: Meta-Header gegen Email-CSS absichern** (2026-10-18, `af8183c`)
 - [x] **Playwright-Migration** (2026-07-13) — xhtml2pdf → Headless Chromium; volle CSS-Unterstützung, korrekte Tabellen-Pagination
 - [x] **Fix: Outlook WordSection-Seitenumbruch** (2026-07-13) — `page: auto !important` neutralisiert benannte CSS-Seiten
 - [x] **`_resolve_cid_images()`** — Inline-Bilder (cid:-Referenzen) als data:-URIs einbetten (2026-07)

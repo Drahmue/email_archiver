@@ -5,6 +5,20 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.0.0
 
 ---
 
+## 2026-10-18 – Netzlaufwerk als Zielordner, Fix fehlender Fließtext (Webfonts)
+
+- **Fix: Meta-Header gegen Email-CSS absichern** (`converter.py`, `af8183c`) — Kopfzeilen als eigene `<div>` statt `<br>`; `#ea-meta` mit `!important`-Regeln im Druck-CSS. Test Stage 3: `user_name` in correspondence_cleanup-Config ergänzt
+- **Zielordner auf Netzlaufwerk** — `config.ini` `[output] folder = \\HAUSERVER\Dataserver\_datahub\Sammelordner\Korrespondenz` (= `S:\...`, UNC-Pfad gemäß Coding-Standard); Code unverändert, CLAUDE.md angepasst (`c785bb1`)
+- **Testlauf** — 3 E-Mails erfolgreich, Schreiben über UNC funktioniert
+- **Fix: Fließtext fehlte im PDF** (`converter.py`, `f163b88`) — Revolut-Mail enthielt nur Kopfblock, Logo und Icons; Text war nicht im PDF (Platz frei gelassen). Ursache: Webfonts (`@font-face`, als data:-URI eingebettet) laden asynchron, `page.pdf()` lief direkt nach `set_content()` bei `document.fonts.status == "loading"` → Chromium zeichnet Text mit ladendem Font nicht. Timing-abhängig (Einzelnachbau 6/6 korrekt, im echten Lauf fehlerhaft). Jetzt `await document.fonts.ready` (max. 5 s) vor `page.pdf()`
+- Revolut-PDF im Zielordner mit Fix neu erzeugt (E-Mail nur lesend aus `01 für Ablage erledigt` geholt)
+
+Verworfen / nicht weiter verfolgt:
+- `wait_until="load"` statt Font-Wait — `document.fonts.ready` ist der gezielte Signalweg für genau dieses Problem
+- Ursache in versteckenden CSS-Regeln (`display:none`, Media Queries) gesucht — Textextraktion zeigte, dass der Text gar nicht im PDF war; Font-Status bestätigte das Timing-Problem
+
+---
+
 ## [Unreleased]
 
 ### Geändert
