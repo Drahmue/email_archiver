@@ -54,6 +54,7 @@ def _build_analyzer(tmp_dir: str):
     config["Settings"] = {
         "unknown_folder": "unbekannt",
         "user_id": "ah",
+        "user_name": "ah",
     }
     config["Files"] = {
         "log_file": "test_stage3.log",

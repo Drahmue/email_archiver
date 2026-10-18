@@ -347,18 +347,21 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
     body_html = _resolve_external_images(body_html)
 
     # --- Metadaten-Header-Block als HTML ---
+    # Jede Zeile als eigenes <div> statt <br>, damit Email-CSS den Zeilenumbruch
+    # nicht unterdrücken kann (z.B. white-space:nowrap oder display:table-cell).
+    # Der id="ea-meta" wird in print_css mit !important-Regeln abgesichert.
     meta_block = (
-        '<div style="'
+        '<div id="ea-meta" style="'
         "border-bottom: 2px solid #cccccc;"
         "margin-bottom: 1.2em;"
         "padding-bottom: 0.8em;"
         "font-family: Arial, Helvetica, sans-serif;"
         "font-size: 9pt;"
         'color: #444444;">'
-        f"<strong>Von:</strong> {html_module.escape(from_addr)}<br>"
-        f"<strong>An:</strong> {html_module.escape(to_addr)}<br>"
-        f"<strong>Betreff:</strong> {html_module.escape(subject)}<br>"
-        f"<strong>Gesendet:</strong> {html_module.escape(date_german)}"
+        f'<div><strong>Von:</strong> {html_module.escape(from_addr)}</div>'
+        f'<div><strong>An:</strong> {html_module.escape(to_addr)}</div>'
+        f'<div><strong>Betreff:</strong> {html_module.escape(subject)}</div>'
+        f'<div><strong>Gesendet:</strong> {html_module.escape(date_german)}</div>'
         "</div>"
     )
 
@@ -373,6 +376,36 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
         # Chromium fügt beim Übergang zu einer benannten Seite einen Seitenumbruch
         # ein — direkt nach dem Meta-Header. Wird hier auf auto zurückgesetzt.
         "div[class*='WordSection'] { page: auto !important; }"
+        # Meta-Header: ID-basierte !important-Regeln schützen vor Email-CSS-Overrides
+        # (z.B. display:table-cell, white-space:nowrap, font-size:0 auf divs).
+        "#ea-meta {"
+        " display: block !important;"
+        " visibility: visible !important;"
+        " border-bottom: 2px solid #cccccc !important;"
+        " margin: 0 0 1.2em 0 !important;"
+        " padding: 0 0 0.8em 0 !important;"
+        " font-family: Arial, Helvetica, sans-serif !important;"
+        " font-size: 9pt !important;"
+        " color: #444444 !important;"
+        " background: none !important;"
+        " width: auto !important;"
+        " float: none !important;"
+        " position: static !important;"
+        " white-space: normal !important;"
+        "}"
+        "#ea-meta > div {"
+        " display: block !important;"
+        " visibility: visible !important;"
+        " font-size: 9pt !important;"
+        " color: #444444 !important;"
+        " line-height: 1.5 !important;"
+        " margin: 1px 0 !important;"
+        " padding: 0 !important;"
+        " white-space: normal !important;"
+        " height: auto !important;"
+        " overflow: visible !important;"
+        " width: auto !important;"
+        "}"
         "</style>"
     )
 
