@@ -14,7 +14,7 @@ IMAP-basierte Lösung (kein Outlook erforderlich).
 - IMAP-Server: Strato (imap.strato.de, SSL, Port 993)
 - Account: ah@haunschild-family.de
 - Quellordner: `01 für Ablage` → nach Verarbeitung nach `01 für Ablage erledigt`
-- Ausgabe: PDFs in `C:\Users\ah\Downloads\email_archive`
+- Ausgabe: PDFs in `\\HAUSERVER\Dataserver\_datahub\Sammelordner\Korrespondenz` (= `S:\_datahub\Sammelordner\Korrespondenz`)
 
 ---
 
