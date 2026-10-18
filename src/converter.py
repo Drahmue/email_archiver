@@ -443,6 +443,14 @@ def convert_and_save(msg: Message, pdf_path: Path) -> None:
             ),
         )
         page.set_content(full_html, wait_until="domcontentloaded")
+        # Webfonts (@font-face, als data:-URI eingebettet) laden asynchron. Solange
+        # sie laden, zeichnet Chromium den Text nicht (unsichtbar, aber Platz belegt).
+        # Ohne Warten landet je nach Timing kein Fließtext im PDF.
+        # Timeout als Absicherung, falls document.fonts.ready nie auflöst.
+        page.evaluate(
+            "Promise.race([document.fonts.ready,"
+            " new Promise(r => setTimeout(r, 5000))]).then(() => true)"
+        )
         pdf_bytes = page.pdf(
             format="A4",
             margin={"top": "1cm", "bottom": "1cm", "left": "1.5cm", "right": "1.5cm"},
