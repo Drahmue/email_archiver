@@ -30,11 +30,7 @@ IMAP-basierte Lösung (kein Outlook erforderlich).
 
 ## Coding-Standards (aus Python_Standard_Prompt.md)
 
-- **ahlib** verwenden: `from ahlib import screen_and_log, StructuredConfigParser, setup_logging, get_timestamp`
-  - Installation: `pip install git+https://github.com/Drahmue/ahlib.git`
-- `screen_and_log()` statt `print()` für alle Ausgaben
-- `StructuredConfigParser` statt `configparser`
-- `setup_logging()` für Log-Initialisierung
+- Coding-Standard: `C:\Users\ah\Dropbox\ClaudeWork\_templates\python_standard.md` (ahlib-API: `create_extended_logger`, `StructuredConfigParser`)
 - Nur `pathlib.Path` für Dateipfade
 - Netzlaufwerke immer als UNC-Pfade
 - Modularer Aufbau: kein Code direkt im Hauptprogramm außer Funktionsaufrufen

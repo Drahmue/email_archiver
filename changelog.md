@@ -5,6 +5,10 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.0.0
 
 ---
 
+## 2026-10-24 – Doku: Übernahme aus Claude-Memory (claude_setup CS-019)
+
+- **CLAUDE.md** — veraltete ahlib-API (`screen_and_log`, `setup_logging`) im Abschnitt Coding-Standards durch Verweis auf `ClaudeWork\_templates\python_standard.md` ersetzt (ahlib-API: `create_extended_logger`, `StructuredConfigParser`)
+
 ## 2026-10-18 – Netzlaufwerk als Zielordner, Fix fehlender Fließtext (Webfonts)
 
 - **Fix: Meta-Header gegen Email-CSS absichern** (`converter.py`, `af8183c`) — Kopfzeilen als eigene `<div>` statt `<br>`; `#ea-meta` mit `!important`-Regeln im Druck-CSS. Test Stage 3: `user_name` in correspondence_cleanup-Config ergänzt
