@@ -1,16 +1,29 @@
 ; Konfigurationsvorlage für email_archiver
 ; Kopieren nach config.ini und Werte anpassen (config.ini ist nicht im Repository)
+; Datei ohne BOM speichern (ahlib liest mit encoding='utf-8')
 
 [imap]
 server           = imap.strato.de
 port             = 993
 username         = BENUTZER@DOMAIN.DE
-password         = PASSWORT_HIER_EINTRAGEN
+; Passwort bevorzugt im Windows-Schlüsselbund ablegen: .venv\Scripts\python.exe set_credentials.py
+; (Dienst 'email_archiver', gilt nur für das Windows-Konto, unter dem der Archiver läuft).
+; Nur wenn dort nichts hinterlegt ist, wird dieser Wert verwendet:
+password         =
+; Auftrag 'ablage' (Korrespondenz)
 source_folder    = 01 für Ablage
 processed_folder = 01 für Ablage erledigt
 
 [output]
+; Ausgabeordner für Auftrag 'ablage' (in Tasks lokale Pfade, nie UNC)
 folder = C:\Users\BENUTZER\Downloads\email_archive
+
+; Optionaler Auftrag 'belege': Mails, deren Text als Beleg dient.
+; Abschnitt weglassen, wenn nicht benötigt.
+[belege]
+source_folder    = 01 für Belege
+processed_folder = 01 für Ablage erledigt
+output_folder    = D:\Dataserver\_datahub\belege\eingang
 
 [logging]
 log_level = INFO

@@ -2,3 +2,5 @@ pikepdf
 imapclient
 playwright
 git+https://github.com/Drahmue/ahlib.git
+keyring
+truststore

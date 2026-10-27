@@ -8,6 +8,10 @@
 - [ ] **Übrige PDFs aus Testlauf 2026-10-18 prüfen** (`2026-10-15_*_Dr_Alexander_Haunschild.pdf`), ggf. bei Bedarf neu erzeugen — offen, 2026-10-18
 - [ ] **Ältere Archiv-PDFs auf fehlenden Fließtext prüfen** (Webfont-Timing-Bug vor `f163b88`, betrifft Mails mit `@font-face`) — offen, 2026-10-18
 - [ ] **PyPDF2 → pypdf** in Tests migrieren (DeprecationWarning) — offen, 2026-10-18
+- [ ] **Thread-Deduplizierung ist nicht aktiv:** `filter_thread_superseded()` existiert in `main.py`, wird in `process_emails()` aber nicht aufgerufen → ältere Glieder eines Threads bekommen trotzdem ein PDF. Klären, ob gewollt; ggf. einbinden (nur Auftrag `ablage`) — offen, 2026-10-27
+- [ ] **Doppelte PDFs nach Teilfehler:** Scheitert `move_email` nach geschriebenem PDF, bleibt die Mail im Quellordner und erzeugt im nächsten Lauf (Task alle 15 Min.) ein zweites PDF (`_2`). Beobachten — offen, 2026-10-27
+- [ ] **correspondence_cleanup automatisch nach dem Archiver** (Tool 1 + 2) — offen, 2026-10-27
+- [ ] **Belege automatisch erkennen** statt manuell in `01 für Belege` (KI-Sortierung, datahub DH-043) — offen, 2026-10-27
 
 ---
 

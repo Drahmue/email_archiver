@@ -5,6 +5,23 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.0.0
 
 ---
 
+## 2026-10-27 – Zweiter Auftrag „Belege“, Betrieb als Task auf dem HauServer (datahub DH-044)
+
+- **Auftrag `belege`** (`main.py`) — optionaler INI-Abschnitt `[belege]` (`source_folder`, `processed_folder`, `output_folder`). Nach dem Auftrag `ablage` (`[imap]`/`[output]`, unverändert) werden Mails aus `01 für Belege` als PDF nach `D:\Dataserver\_datahub\belege\eingang` geschrieben (Text der Mail ist der Beleg, Weiterverarbeitung durch `belege_sammler`) und nach `01 für Ablage erledigt` verschoben. Ohne `[belege]` Verhalten wie bisher
+- **PDF erst als `.tmp`, dann umbenennen** (`save_pdf_atomic`) — Folgeprozesse (belege_sammler alle 15 Min.) sehen nie halb geschriebene Dateien
+- **`--dry-run`** — listet je Auftrag die Mails und Zieldateinamen, erzeugt kein PDF, verschiebt nichts
+- **Passwort aus dem Windows-Schlüsselbund** (Dienst `email_archiver`, Benutzer = IMAP-Benutzer, `set_credentials.py`); Fallback `[imap] password` in der INI (AHMain unverändert)
+- **Log als Monatsdatei** `logs/email_archiver_yyyy-MM.log` statt einer Datei je Lauf
+- **Fix: Zertifikatsprüfung** (`imap_client.py`) — auf dem HauServer `CERTIFICATE_VERIFY_FAILED`: Strato sendet das Zwischenzertifikat (Telekom Security ServerID OV Class 2 CA) nicht mit, Windows lädt es nach, Python nicht. Jetzt `truststore` (Prüfung über Windows)
+- **HauServer:** Installation `D:\Dataserver\_Batchprozesse\email_archiver` (Chromium im Projektordner `ms-playwright\`, `PLAYWRIGHT_BROWSERS_PATH`), `start_email_archiver.ps1` (git pull, `-DryRun`), `task_anlegen.ps1`, Task `\AHSkripts\email_archiver` alle 15 Min. als Administrator, Watchdog `max_age_hours` 2
+- **Tests:** `tests/test_stage5_jobs.py` (Aufträge, `.tmp`-Schreiben, DryRun); 44 bestanden, 5 übersprungen
+- **Testlauf 27.10.:** DryRun, dann echter Lauf mit 2 Ablage-Mails und 1 Beleg (PayPal/McDonald's), alle PDFs von AH geprüft
+
+Verworfen:
+- Zwischenzertifikat von Hand in den Windows-Speicher importieren (bricht beim Zertifikatswechsel der Telekom)
+- Zertifikatsprüfung abschalten (wie `imaplib`-Standard)
+- Automatische Erkennung Beleg/Korrespondenz per Absenderregeln oder KI — vorerst sortiert AH von Hand in `01 für Belege` (KI-Sortierung später, datahub DH-043)
+
 ## 2026-10-24 – Doku: Übernahme aus Claude-Memory (claude_setup CS-019)
 
 - **CLAUDE.md** — veraltete ahlib-API (`screen_and_log`, `setup_logging`) im Abschnitt Coding-Standards durch Verweis auf `ClaudeWork\_templates\python_standard.md` ersetzt (ahlib-API: `create_extended_logger`, `StructuredConfigParser`)

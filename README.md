@@ -51,16 +51,26 @@ playwright install chromium
 server           = imap.strato.de
 port             = 993
 username          = name@domain.de
-password          = geheim
+password          =                ; leer lassen, wenn im Schlüsselbund (set_credentials.py)
 source_folder    = 01 für Ablage
 processed_folder = 01 für Ablage erledigt
 
 [output]
 folder = C:\Users\...\Downloads\email_archive
 
+; optional: zweiter Auftrag für Belege-Mails
+[belege]
+source_folder    = 01 für Belege
+processed_folder = 01 für Ablage erledigt
+output_folder    = D:\Dataserver\_datahub\belege\eingang
+
 [logging]
 level = INFO
 ```
+
+Passwort: zuerst Windows-Schlüsselbund (Dienst `email_archiver`, Benutzer = IMAP-Benutzer,
+anlegen mit `.venv\Scripts\python.exe set_credentials.py` unter dem Konto, unter dem der
+Archiver läuft), sonst `[imap] password`.
 
 ## Verwendung
 
@@ -70,15 +80,24 @@ level = INFO
 
 # Oder direkt:
 python src/main.py
+python src/main.py --dry-run     # nur auflisten, nichts schreiben oder verschieben
 ```
 
-Log wird unter `logs/email_archiver_JJJJMMTT_HHMMSS.log` gespeichert.
+Log wird unter `logs/email_archiver_JJJJ-MM.log` gespeichert (eine Datei pro Monat).
+
+## Betrieb auf dem HauServer
+
+- Installation: `D:\Dataserver\_Batchprozesse\email_archiver`, Chromium im Projektordner
+  (`ms-playwright\`, über `PLAYWRIGHT_BROWSERS_PATH` im Startskript)
+- Task `\AHSkripts\email_archiver` alle 15 Minuten als Administrator (`task_anlegen.ps1`),
+  startet `start_email_archiver.ps1` (git pull, dann `src\main.py`; `-DryRun` möglich)
+- Fehler meldet der Task-Watchdog (`max_age_hours` 2)
 
 ## Requirements
 
 - Python 3.11+
 - Windows (Zeitzone Europe/Berlin via `zoneinfo`)
-- Pakete: `playwright`, `pikepdf`, `imapclient`, `ahlib`
+- Pakete: `playwright`, `pikepdf`, `imapclient`, `ahlib`, `keyring`, `truststore`
 - Chromium (via `playwright install chromium`)
 
 ## Kompatibilität mit correspondence_cleanup

@@ -13,8 +13,10 @@ IMAP-basierte Lösung (kein Outlook erforderlich).
 
 - IMAP-Server: Strato (imap.strato.de, SSL, Port 993)
 - Account: ah@haunschild-family.de
-- Quellordner: `01 für Ablage` → nach Verarbeitung nach `01 für Ablage erledigt`
-- Ausgabe: PDFs in `\\HAUSERVER\Dataserver\_datahub\Sammelordner\Korrespondenz` (= `S:\_datahub\Sammelordner\Korrespondenz`)
+- Auftrag `ablage`: `01 für Ablage` → PDFs in `_datahub\Sammelordner\Korrespondenz` → Mail nach `01 für Ablage erledigt`
+- Auftrag `belege` (seit 2026-10-27, INI `[belege]`): `01 für Belege` → PDFs in `_datahub\belege\eingang` (→ belege_sammler) → Mail nach `01 für Ablage erledigt`
+- Betrieb: HauServer `D:\Dataserver\_Batchprozesse\email_archiver`, Task `\AHSkripts\email_archiver` alle 15 Min. (Administrator, Passwort im Schlüsselbund), lokale Pfade `D:\Dataserver\...`. Auf AHMain nicht parallel von Hand starten
+- Doku im Gesamtkontext: ClaudeWork-Projekt `datahub` (DH-044, KI-Sortierung DH-043)
 
 ---
 

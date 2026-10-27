@@ -3,21 +3,29 @@ main.py — Einstiegspunkt für email_archiver
 
 Ablauf:
   1. Konfiguration aus config/config.ini einlesen
-  2. Logging initialisieren (Datei + Konsole)
-  3. IMAP-Verbindung zu Strato herstellen
-  4. Alle E-Mails aus source_folder abrufen
-  5. Jede E-Mail in PDF konvertieren und im output_folder speichern
-  6. Erfolgreich verarbeitete E-Mails in processed_folder verschieben
-  7. Fehlgeschlagene E-Mails im source_folder belassen, Fehler loggen
-  8. Abschluss-Zusammenfassung ausgeben
+  2. Logging initialisieren (Datei + Konsole), Monatsdatei logs/email_archiver_yyyy-MM.log
+  3. IMAP-Verbindung zu Strato herstellen (Passwort aus dem Windows-Schlüsselbund,
+     Fallback: [imap] password in der INI)
+  4. Je Auftrag (Ablage aus [imap]/[output], optional Belege aus [belege]):
+     a. Alle E-Mails aus source_folder abrufen
+     b. Jede E-Mail in PDF konvertieren und im Ausgabeordner speichern
+        (erst als .tmp, dann umbenennen — Folgeprozesse sehen nur fertige PDFs)
+     c. Erfolgreich verarbeitete E-Mails in processed_folder verschieben
+     d. Fehlgeschlagene E-Mails im source_folder belassen, Fehler loggen
+  5. Abschluss-Zusammenfassung ausgeben
 
 Verwendung:
-  python src/main.py
+  python src/main.py              # Produktiv
+  python src/main.py --dry-run    # nur auflisten: kein PDF, nichts verschieben
+
+Exit-Code: 0 = OK, 1 = Fehler (Konfiguration, Verbindung oder mindestens eine E-Mail)
 """
 
+import argparse
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from email.message import Message
 from pathlib import Path
@@ -34,6 +42,18 @@ from ahlib import create_extended_logger, load_structured_config
 import imap_client as imap
 import converter
 from utils import build_pdf_filename, decode_mime_header
+
+KEYRING_SERVICE = "email_archiver"
+
+
+@dataclass
+class Job:
+    """Ein Verarbeitungsauftrag: IMAP-Quellordner → PDFs im Ausgabeordner → IMAP-Zielordner."""
+
+    name: str
+    source_folder: str
+    processed_folder: str
+    output_folder: Path
 
 
 def load_config(config_path: str, logger) -> object:
@@ -126,30 +146,47 @@ def filter_thread_superseded(
     return to_process, superseded
 
 
-def process_emails(
-    client,
-    source_folder: str,
-    processed_folder: str,
-    output_folder: Path,
-    logger,
-) -> tuple[int, int]:
+def save_pdf_atomic(msg: Message, pdf_path: Path) -> None:
     """
-    Verarbeitet alle E-Mails im Quellordner: konvertiert sie zu PDF und verschiebt sie.
+    Erzeugt das PDF zuerst unter <name>.pdf.tmp und benennt es danach um.
+
+    Folgeprozesse, die den Ausgabeordner überwachen (z. B. belege_sammler für
+    belege\\eingang), sehen so nie eine halb geschriebene PDF-Datei.
+
+    Args:
+        msg (Message): Geparste E-Mail
+        pdf_path (Path): Endgültiger Zielpfad der PDF-Datei
+
+    Raises:
+        Exception: Fehler aus converter.convert_and_save (die .tmp-Datei wird entfernt)
+    """
+    tmp_path = pdf_path.with_name(pdf_path.name + ".tmp")
+    try:
+        converter.convert_and_save(msg, tmp_path)
+        os.replace(tmp_path, pdf_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def process_emails(client, job: Job, logger, dry_run: bool = False) -> tuple[int, int]:
+    """
+    Verarbeitet alle E-Mails im Quellordner eines Auftrags: konvertiert sie zu PDF und verschiebt sie.
 
     Fehler einzelner E-Mails werden geloggt. Die Verarbeitung läuft mit der
     nächsten E-Mail weiter (kein Abbruch bei Einzelfehler).
 
     Args:
         client: Angemeldeter imapclient.IMAPClient
-        source_folder (str): IMAP-Quellordner
-        processed_folder (str): IMAP-Zielordner nach Verarbeitung
-        output_folder (Path): Lokales Verzeichnis für PDF-Ausgabe
+        job (Job): Auftrag mit IMAP-Quell-/Zielordner und Ausgabeordner
         logger: ExtendedLogger-Instanz
+        dry_run (bool): Nur auflisten, kein PDF erzeugen, nichts verschieben
 
     Returns:
         tuple[int, int]: (Anzahl Erfolge, Anzahl Fehler)
     """
-    emails = imap.fetch_emails(client, source_folder)
+    logger.info(f"Auftrag '{job.name}': '{job.source_folder}' -> {job.output_folder}, "
+                f"danach nach '{job.processed_folder}'")
+    emails = imap.fetch_emails(client, job.source_folder)
 
     if not emails:
         logger.info("Keine E-Mails zur Verarbeitung gefunden.")
@@ -167,15 +204,21 @@ def process_emails(
 
         try:
             # PDF-Dateipfad nach Namenskonvention bestimmen
-            pdf_path = build_pdf_filename(date_str, from_addr, output_folder)
+            pdf_path = build_pdf_filename(date_str, from_addr, job.output_folder)
+
+            if dry_run:
+                logger.info(f"  -> DryRun: würde {pdf_path.name} schreiben und nach "
+                            f"'{job.processed_folder}' verschieben")
+                success_count += 1
+                continue
 
             # E-Mail → PDF konvertieren und speichern
-            converter.convert_and_save(msg, pdf_path)
+            save_pdf_atomic(msg, pdf_path)
             logger.info(f"  -> PDF gespeichert: {pdf_path.name}")
 
             # E-Mail in Zielordner verschieben
-            imap.move_email(client, msg_id, processed_folder)
-            logger.info(f"  -> E-Mail verschoben nach '{processed_folder}'")
+            imap.move_email(client, msg_id, job.processed_folder)
+            logger.info(f"  -> E-Mail verschoben nach '{job.processed_folder}'")
 
             success_count += 1
 
@@ -188,50 +231,114 @@ def process_emails(
     return success_count, error_count
 
 
+def read_jobs(config) -> list[Job]:
+    """
+    Liest die Verarbeitungsaufträge aus der Konfiguration.
+
+    Auftrag 'ablage' (immer): [imap] source_folder/processed_folder, [output] folder.
+    Auftrag 'belege' (optional, nur wenn Abschnitt [belege] vorhanden):
+    [belege] source_folder/processed_folder/output_folder.
+
+    Args:
+        config: Geladene Konfiguration (StructuredConfigParser)
+
+    Returns:
+        list[Job]: Aufträge in Verarbeitungsreihenfolge
+    """
+    jobs = [Job("ablage",
+                config.get("imap", "source_folder"),
+                config.get("imap", "processed_folder"),
+                Path(config.get("output", "folder")))]
+    if config.has_section("belege"):
+        jobs.append(Job("belege",
+                        config.get("belege", "source_folder"),
+                        config.get("belege", "processed_folder"),
+                        Path(config.get("belege", "output_folder"))))
+    return jobs
+
+
+def get_password(config, username: str, logger) -> str:
+    """
+    Holt das IMAP-Passwort: zuerst aus dem Windows-Schlüsselbund (Dienst 'email_archiver',
+    Benutzer = IMAP-Benutzername, angelegt mit set_credentials.py), sonst aus [imap] password.
+
+    Args:
+        config: Geladene Konfiguration
+        username (str): IMAP-Benutzername
+        logger: ExtendedLogger-Instanz
+
+    Returns:
+        str: Passwort
+
+    Raises:
+        ValueError: Wenn weder Schlüsselbund noch INI ein Passwort liefern
+    """
+    try:
+        import keyring
+        password = keyring.get_password(KEYRING_SERVICE, username)
+    except ImportError:
+        password = None
+    if password:
+        logger.info("IMAP-Passwort aus dem Windows-Schlüsselbund")
+        return password
+    password = config.get("imap", "password", fallback="").strip()
+    if password:
+        logger.info("IMAP-Passwort aus config.ini")
+        return password
+    raise ValueError(
+        f"Kein IMAP-Passwort: weder im Schlüsselbund (Dienst '{KEYRING_SERVICE}', Konto "
+        f"{os.environ.get('USERNAME')}) noch in config.ini. Abhilfe: set_credentials.py"
+    )
+
+
 def main() -> None:
     """
     Hauptfunktion: Konfiguration laden, IMAP verbinden, E-Mails verarbeiten, zusammenfassen.
     """
-    # --- Logging initialisieren ---
+    parser = argparse.ArgumentParser(description="E-Mails per IMAP als PDF archivieren")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="nur auflisten: kein PDF erzeugen, nichts verschieben")
+    args = parser.parse_args()
+
+    # --- Logging initialisieren (eine Datei pro Monat, angehängt) ---
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = logs_dir / f"email_archiver_{timestamp}.log"
+    log_file = logs_dir / f"email_archiver_{datetime.now():%Y-%m}.log"
     logger = create_extended_logger(str(log_file), screen_output=True, script_name="email_archiver")
 
     logger.info("=" * 60)
-    logger.info("email_archiver gestartet")
+    logger.info("email_archiver gestartet" + (" (DryRun)" if args.dry_run else ""))
     logger.info("=" * 60)
 
     # --- Konfiguration laden ---
     try:
         config = load_config("config/config.ini", logger)
-    except FileNotFoundError as exc:
-        logger.error(str(exc))
+        server = config.get("imap", "server")
+        port = config.getint("imap", "port")
+        username = config.get("imap", "username")
+        jobs = read_jobs(config)
+        password = get_password(config, username, logger)
+    except Exception as exc:
+        logger.error(f"Konfiguration: {exc}")
         sys.exit(1)
 
-    server = config.get("imap", "server")
-    port = config.getint("imap", "port")
-    username = config.get("imap", "username")
-    password = config.get("imap", "password")
-    source_folder = config.get("imap", "source_folder")
-    processed_folder = config.get("imap", "processed_folder")
-    output_folder_str = config.get("output", "folder")
-
     # --- Ausgabeordner sicherstellen ---
-    output_folder = ensure_output_folder(output_folder_str)
-    logger.info(f"PDF-Ausgabeordner: {output_folder}")
+    for job in jobs:
+        ensure_output_folder(str(job.output_folder))
 
     # --- IMAP-Verbindung herstellen ---
     client = None
+    success_count = 0
+    error_count = 0
     try:
         logger.info(f"Verbinde mit {server}:{port} als {username} ...")
         client = imap.connect(server, port, username, password)
 
-        # --- E-Mails verarbeiten ---
-        success_count, error_count = process_emails(
-            client, source_folder, processed_folder, output_folder, logger
-        )
+        # --- E-Mails je Auftrag verarbeiten ---
+        for job in jobs:
+            ok, err = process_emails(client, job, logger, dry_run=args.dry_run)
+            success_count += ok
+            error_count += err
 
     except Exception as exc:
         logger.error(f"Kritischer Fehler: {exc}")

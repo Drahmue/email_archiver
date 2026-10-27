@@ -13,8 +13,10 @@ von Ordnernamen mit Umlauten (RFC 3501) automatisch behandelt.
 
 import email
 import logging
+import ssl
 from email.message import Message
 
+import truststore
 from imapclient import IMAPClient
 from imapclient.exceptions import IMAPClientError
 
@@ -37,7 +39,11 @@ def connect(server: str, port: int, username: str, password: str) -> IMAPClient:
     Raises:
         IMAPClientError: Bei Verbindungs- oder Anmeldefehler
     """
-    client = IMAPClient(server, port=port, ssl=True)
+    # Zertifikatsprüfung über den Windows-Zertifikatspeicher (truststore): Strato sendet das
+    # Zwischenzertifikat nicht mit; Windows lädt es nach, Pythons Standardprüfung nicht
+    # (HauServer 2026-10-27: CERTIFICATE_VERIFY_FAILED).
+    ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client = IMAPClient(server, port=port, ssl=True, ssl_context=ssl_context)
     client.login(username, password)
     logger.info(f"IMAP-Verbindung hergestellt: {username}@{server}:{port}")
     return client
