@@ -4,7 +4,9 @@ main.py — Einstiegspunkt für email_archiver
 Ablauf:
   1. Konfiguration aus config/config.ini einlesen
   2. Logging initialisieren (Datei + Konsole), Monatsdatei logs/email_archiver_yyyy-MM.log
-  3. IMAP-Verbindung zu Strato herstellen (Passwort aus dem Windows-Schlüsselbund,
+  3. Optional gemeinsame Sperre belegen ([run] lock_file): Task auf dem HauServer und
+     Handstart auf AHMain laufen nie gleichzeitig; belegt → warten, dann Lauf überspringen (Exit 0)
+  3b. IMAP-Verbindung zu Strato herstellen (Passwort aus dem Windows-Schlüsselbund,
      Fallback: [imap] password in der INI)
   4. Je Auftrag (Ablage aus [imap]/[output], optional Belege aus [belege]):
      a. Alle E-Mails aus source_folder abrufen
@@ -24,7 +26,9 @@ Exit-Code: 0 = OK, 1 = Fehler (Konfiguration, Verbindung oder mindestens eine E-
 import argparse
 import os
 import re
+import socket
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from email.message import Message
@@ -291,6 +295,56 @@ def get_password(config, username: str, logger) -> str:
     )
 
 
+def acquire_lock(lock_path: Path, wait_seconds: int, stale_minutes: int, logger) -> bool:
+    """
+    Belegt die gemeinsame Sperrdatei (exklusiv anlegen), damit nie zwei Archiver
+    (z. B. Task auf dem HauServer und Handstart auf AHMain) gleichzeitig dieselben
+    IMAP-Ordner verarbeiten.
+
+    Ist die Sperre belegt, wird bis zu wait_seconds gewartet. Eine Sperre, die älter als
+    stale_minutes ist, gilt als verwaist (abgestürzter Lauf) und wird entfernt.
+
+    Args:
+        lock_path (Path): Sperrdatei (auf dem HauServer lokal, auf AHMain per UNC)
+        wait_seconds (int): Maximale Wartezeit bei belegter Sperre
+        stale_minutes (int): Alter, ab dem eine Sperre als verwaist gilt
+        logger: ExtendedLogger-Instanz
+
+    Returns:
+        bool: True = Sperre belegt (Lauf darf starten), False = Sperre blieb belegt
+    """
+    deadline = time.monotonic() + wait_seconds
+    waited = False
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, f"{socket.gethostname()} {os.getpid()} {datetime.now():%Y-%m-%d %H:%M:%S}".encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+                holder = lock_path.read_text(encoding="utf-8", errors="replace").strip()
+            except FileNotFoundError:
+                continue  # gerade freigegeben
+            if age > stale_minutes * 60:
+                logger.warning(f"Verwaiste Sperre entfernt ({holder}, {age / 60:.0f} Min. alt)")
+                lock_path.unlink(missing_ok=True)
+                continue
+            if not waited:
+                logger.info(f"Sperre belegt ({holder}), warte bis zu {wait_seconds} s ...")
+                waited = True
+            if time.monotonic() > deadline:
+                logger.warning(f"Sperre weiterhin belegt ({holder}): Lauf übersprungen")
+                return False
+            time.sleep(2)
+
+
+def release_lock(lock_path: Path) -> None:
+    """Gibt die Sperrdatei frei."""
+    lock_path.unlink(missing_ok=True)
+
+
 def main() -> None:
     """
     Hauptfunktion: Konfiguration laden, IMAP verbinden, E-Mails verarbeiten, zusammenfassen.
@@ -318,6 +372,9 @@ def main() -> None:
         username = config.get("imap", "username")
         jobs = read_jobs(config)
         password = get_password(config, username, logger)
+        lock_file = config.get("run", "lock_file", fallback="").strip()
+        lock_wait = config.getint("run", "lock_wait_seconds", fallback=60)
+        lock_stale = config.getint("run", "lock_stale_minutes", fallback=10)
     except Exception as exc:
         logger.error(f"Konfiguration: {exc}")
         sys.exit(1)
@@ -325,6 +382,11 @@ def main() -> None:
     # --- Ausgabeordner sicherstellen ---
     for job in jobs:
         ensure_output_folder(str(job.output_folder))
+
+    # --- Gemeinsame Sperre (optional, [run] lock_file) ---
+    lock_path = Path(lock_file) if lock_file else None
+    if lock_path and not acquire_lock(lock_path, lock_wait, lock_stale, logger):
+        return  # anderer Archiver läuft gerade: kein Fehler (Exit 0)
 
     # --- IMAP-Verbindung herstellen ---
     client = None
@@ -347,6 +409,8 @@ def main() -> None:
     finally:
         if client is not None:
             imap.disconnect(client)
+        if lock_path:
+            release_lock(lock_path)
 
     # --- Abschluss-Zusammenfassung ---
     logger.info("=" * 60)

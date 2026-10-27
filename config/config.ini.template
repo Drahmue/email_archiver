@@ -25,5 +25,13 @@ source_folder    = 01 für Belege
 processed_folder = 01 für Ablage erledigt
 output_folder    = D:\Dataserver\_datahub\belege\eingang
 
+; Optional: gemeinsame Sperrdatei, wenn der Archiver auf mehreren Rechnern laufen kann
+; (HauServer-Task + Handstart AHMain). Auf dem HauServer lokaler Pfad, auf AHMain derselbe Ort per UNC.
+; Belegt → bis lock_wait_seconds warten, dann Lauf überspringen; älter als lock_stale_minutes = verwaist.
+[run]
+lock_file          = D:\Dataserver\_Batchprozesse\email_archiver\email_archiver.lock
+lock_wait_seconds  = 60
+lock_stale_minutes = 10
+
 [logging]
 log_level = INFO

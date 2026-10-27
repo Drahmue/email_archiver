@@ -14,7 +14,8 @@ Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.0.0
 - **Log als Monatsdatei** `logs/email_archiver_yyyy-MM.log` statt einer Datei je Lauf
 - **Fix: Zertifikatsprüfung** (`imap_client.py`) — auf dem HauServer `CERTIFICATE_VERIFY_FAILED`: Strato sendet das Zwischenzertifikat (Telekom Security ServerID OV Class 2 CA) nicht mit, Windows lädt es nach, Python nicht. Jetzt `truststore` (Prüfung über Windows)
 - **HauServer:** Installation `D:\Dataserver\_Batchprozesse\email_archiver` (Chromium im Projektordner `ms-playwright\`, `PLAYWRIGHT_BROWSERS_PATH`), `start_email_archiver.ps1` (git pull, `-DryRun`), `task_anlegen.ps1`, Task `\AHSkripts\email_archiver` alle 15 Min. als Administrator, Watchdog `max_age_hours` 2
-- **Tests:** `tests/test_stage5_jobs.py` (Aufträge, `.tmp`-Schreiben, DryRun); 44 bestanden, 5 übersprungen
+- **Gemeinsame Sperre** (`[run] lock_file`, `lock_wait_seconds` 60, `lock_stale_minutes` 10) — Handstart auf AHMain (Sperre per UNC) und Task auf dem HauServer (lokal) laufen nie gleichzeitig; belegt → warten, dann Lauf überspringen (Exit 0, keine Watchdog-Meldung). Test: vorgetäuschte Sperre → nach 60 s übersprungen; freie Sperre → belegt und freigegeben. Remote-Start des Tasks von AHMain (`schtasks /Run /S`) verworfen: Zugriff verweigert, AH-Konto ist kein Administrator des HauServers (so gewollt)
+- **Tests:** `tests/test_stage5_jobs.py` (Aufträge, `.tmp`-Schreiben, DryRun, Sperre); 47 bestanden, 5 übersprungen
 - **Testlauf 27.10.:** DryRun, dann echter Lauf mit 2 Ablage-Mails und 1 Beleg (PayPal/McDonald's), alle PDFs von AH geprüft
 
 Verworfen:

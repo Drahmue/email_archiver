@@ -93,6 +93,24 @@ Log wird unter `logs/email_archiver_JJJJ-MM.log` gespeichert (eine Datei pro Mon
   startet `start_email_archiver.ps1` (git pull, dann `src\main.py`; `-DryRun` möglich)
 - Fehler meldet der Task-Watchdog (`max_age_hours` 2)
 
+## Handstart auf AHMain neben dem Task
+
+Beide Installationen nutzen dieselbe Sperrdatei (`[run] lock_file`), damit nie zwei Läufe
+gleichzeitig dieselben IMAP-Ordner verarbeiten. Ist die Sperre belegt, wartet der Archiver
+bis zu `lock_wait_seconds` (60) und überspringt den Lauf dann (Exit 0, Warnung im Log).
+
+```ini
+; HauServer (lokal)
+[run]
+lock_file = D:\Dataserver\_Batchprozesse\email_archiver\email_archiver.lock
+; AHMain (derselbe Ort per UNC)
+[run]
+lock_file = \\HAUSERVER\Dataserver\_Batchprozesse\email_archiver\email_archiver.lock
+```
+
+AHMain-`config.ini` zusätzlich mit `[belege]` und UNC-Pfaden
+(`\\HAUSERVER\Dataserver\_datahub\Sammelordner\Korrespondenz`, `\\HAUSERVER\Dataserver\_datahub\belege\eingang`).
+
 ## Requirements
 
 - Python 3.11+

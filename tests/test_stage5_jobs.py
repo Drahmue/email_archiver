@@ -47,6 +47,9 @@ class _Logger:
     def info(self, *_):
         pass
 
+    def warning(self, *_):
+        pass
+
     def error(self, *_):
         pass
 
@@ -89,6 +92,32 @@ def test_save_pdf_atomic_fehler(tmp_path):
         with pytest.raises(RuntimeError):
             main.save_pdf_atomic(_mail(), ziel)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_sperre_belegen_und_freigeben(tmp_path):
+    lock = tmp_path / "email_archiver.lock"
+    assert main.acquire_lock(lock, 0, 10, _Logger()) is True
+    assert lock.exists()
+    main.release_lock(lock)
+    assert not lock.exists()
+
+
+def test_sperre_belegt_wird_uebersprungen(tmp_path):
+    lock = tmp_path / "email_archiver.lock"
+    lock.write_text("AHMAIN 1234 2026-10-27 12:00:00", encoding="utf-8")
+    assert main.acquire_lock(lock, 0, 10, _Logger()) is False
+    assert lock.read_text(encoding="utf-8").startswith("AHMAIN")   # fremde Sperre bleibt
+
+
+def test_verwaiste_sperre_wird_entfernt(tmp_path):
+    import os
+    import time
+    lock = tmp_path / "email_archiver.lock"
+    lock.write_text("HAUSERVER 99 alt", encoding="utf-8")
+    alt = time.time() - 11 * 60
+    os.utime(lock, (alt, alt))
+    assert main.acquire_lock(lock, 0, 10, _Logger()) is True
+    assert not lock.read_text(encoding="utf-8").startswith("HAUSERVER 99")
 
 
 def test_dry_run_schreibt_und_verschiebt_nichts(tmp_path):
