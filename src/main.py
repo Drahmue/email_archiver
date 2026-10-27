@@ -320,6 +320,7 @@ def acquire_lock(lock_path: Path, wait_seconds: int, stale_minutes: int, logger)
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, f"{socket.gethostname()} {os.getpid()} {datetime.now():%Y-%m-%d %H:%M:%S}".encode())
             os.close(fd)
+            logger.info(f"Sperre belegt: {lock_path}")
             return True
         except FileExistsError:
             try:
