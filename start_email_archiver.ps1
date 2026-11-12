@@ -32,5 +32,12 @@ elseif ("$git" -notmatch 'Already up to date') { Write-Log "git pull: $($git -jo
 # Chromium liegt im Projektordner (unabhaengig vom Benutzerprofil des Tasks)
 $env:PLAYWRIGHT_BROWSERS_PATH = "$ProjectDir\ms-playwright"
 
-if ($DryRun) { & $VenvPython $Script --dry-run } else { & $VenvPython $Script }
+$pyArgs = @($Script); if ($DryRun) { $pyArgs += '--dry-run' }
+# Bei Exit <> 0 haengt Invoke-Logged die Konsolenausgabe (z. B. Traceback) ans Log an (datahub DH-063).
+$lib = "D:\Dataserver\_Batchprozesse\_shared\Invoke-Logged.psm1"
+if (Test-Path $lib) {
+    Import-Module $lib -Force
+    exit (Invoke-Logged -FilePath $VenvPython -ArgumentList $pyArgs -Mode OnError -LogFile $LogFile)
+}
+& $VenvPython @pyArgs
 exit $LASTEXITCODE
